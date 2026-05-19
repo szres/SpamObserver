@@ -266,11 +266,6 @@
               <input type="text" x-model="usernameForm.new_username"
                 class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
             </div>
-            <div>
-              <label class="block text-xs text-gray-500 mb-1">Confirm Password</label>
-              <input type="password" x-model="usernameForm.password"
-                class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
-            </div>
             <button type="submit"
               class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded transition"
               :disabled="settingsLoading">
@@ -291,6 +286,11 @@
             <div>
               <label class="block text-xs text-gray-500 mb-1">New Password</label>
               <input type="password" x-model="passwordForm.new_password"
+                class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Confirm New Password</label>
+              <input type="password" x-model="passwordForm.confirm_password"
                 class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
             </div>
             <button type="submit"
@@ -336,8 +336,8 @@
         
         sseSource: null,
 
-        passwordForm: { current_password: '', new_password: '' },
-        usernameForm: { new_username: '', password: '' },
+        passwordForm: { current_password: '', new_password: '', confirm_password: '' },
+        usernameForm: { new_username: '' },
         settingsError: '',
         settingsSuccess: '',
         settingsLoading: false,
@@ -350,7 +350,7 @@
 
         async checkAuth() {
           try {
-            const r = await fetch('/api/auth/me');
+            const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
             if (r.ok) {
               const d = await r.json();
               this.authenticated = true;
@@ -362,7 +362,7 @@
 
         async fetchBotStatus() {
           try {
-            const r = await fetch('/api/bot/status');
+            const r = await fetch('/api/bot/status', { credentials: 'same-origin' });
             if (r.ok) {
               const d = await r.json();
               this.botEnabled = d.enabled;
@@ -376,6 +376,7 @@
           try {
             const r = await fetch('/api/auth/login', {
               method: 'POST',
+              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(this.loginForm)
             });
@@ -397,7 +398,7 @@
         },
 
         async logout() {
-          await fetch('/api/auth/logout', { method: 'POST' });
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
           this.authenticated = false;
           this.currentUser = '';
           this.groups = [];
@@ -405,7 +406,7 @@
 
         async loadGroups() {
           try {
-            const r = await fetch('/api/config/groups');
+            const r = await fetch('/api/config/groups', { credentials: 'same-origin' });
             if (r.ok) {
               this.groups = await r.json() || [];
             }
@@ -418,6 +419,7 @@
           try {
             const r = await fetch('/api/config/groups', {
               method: 'POST',
+              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ chat_id: id })
             });
@@ -431,7 +433,7 @@
 
         async removeGroup(chatId) {
           try {
-            await fetch('/api/config/groups/' + chatId, { method: 'DELETE' });
+            await fetch('/api/config/groups/' + chatId, { method: 'DELETE', credentials: 'same-origin' });
             this.loadGroups();
           } catch (e) {}
         },
@@ -441,6 +443,7 @@
           try {
             const r = await fetch('/api/config/bot/toggle', {
               method: 'POST',
+              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ enabled: newState })
             });
@@ -454,25 +457,33 @@
         async changePassword() {
           this.settingsError = '';
           this.settingsSuccess = '';
-          if (!this.passwordForm.current_password || !this.passwordForm.new_password) {
-            this.settingsError = 'Both fields are required';
+          if (!this.passwordForm.current_password || !this.passwordForm.new_password || !this.passwordForm.confirm_password) {
+            this.settingsError = 'All fields are required';
             return;
           }
           if (this.passwordForm.new_password.length < 4) {
             this.settingsError = 'New password must be at least 4 characters';
             return;
           }
+          if (this.passwordForm.new_password !== this.passwordForm.confirm_password) {
+            this.settingsError = 'New passwords do not match';
+            return;
+          }
           this.settingsLoading = true;
           try {
             const r = await fetch('/api/config/auth/change-password', {
               method: 'POST',
+              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(this.passwordForm)
+              body: JSON.stringify({
+                current_password: this.passwordForm.current_password,
+                new_password: this.passwordForm.new_password
+              })
             });
             const d = await r.json();
             if (r.ok) {
               this.settingsSuccess = 'Password updated successfully';
-              this.passwordForm = { current_password: '', new_password: '' };
+              this.passwordForm = { current_password: '', new_password: '', confirm_password: '' };
             } else {
               this.settingsError = d.error || 'Failed to update password';
             }
@@ -485,22 +496,23 @@
         async changeUsername() {
           this.settingsError = '';
           this.settingsSuccess = '';
-          if (!this.usernameForm.new_username || !this.usernameForm.password) {
-            this.settingsError = 'Both fields are required';
+          if (!this.usernameForm.new_username) {
+            this.settingsError = 'Username is required';
             return;
           }
           this.settingsLoading = true;
           try {
             const r = await fetch('/api/config/auth/change-username', {
               method: 'POST',
+              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(this.usernameForm)
+              body: JSON.stringify({ new_username: this.usernameForm.new_username })
             });
             const d = await r.json();
             if (r.ok) {
               this.settingsSuccess = 'Username updated successfully';
               this.currentUser = d.username;
-              this.usernameForm = { new_username: '', password: '' };
+              this.usernameForm = { new_username: '' };
             } else {
               this.settingsError = d.error || 'Failed to update username';
             }
@@ -513,8 +525,8 @@
         resetSettings() {
           this.settingsError = '';
           this.settingsSuccess = '';
-          this.passwordForm = { current_password: '', new_password: '' };
-          this.usernameForm = { new_username: '', password: '' };
+          this.passwordForm = { current_password: '', new_password: '', confirm_password: '' };
+          this.usernameForm = { new_username: '' };
         },
 
         connectSSE() {

@@ -256,18 +256,12 @@ func (h *Handler) handleChangePassword(c fiber.Ctx) error {
 func (h *Handler) handleChangeUsername(c fiber.Ctx) error {
 	var body struct {
 		NewUsername string `json:"new_username"`
-		Password   string `json:"password"`
 	}
 	if err := c.Bind().JSON(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
-	if body.NewUsername == "" || body.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "both new username and password are required"})
-	}
-
-	ok, err := h.store.VerifyAdminPassword(body.Password)
-	if err != nil || !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "password is incorrect"})
+	if body.NewUsername == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "new username is required"})
 	}
 
 	if err := h.store.UpdateAdminUsername(body.NewUsername); err != nil {
