@@ -51,7 +51,7 @@
         <template x-if="authenticated">
           <div class="flex items-center gap-3">
             <span class="text-sm text-gray-400" x-text="currentUser"></span>
-            <button @click="showSettings = true; loadBotTokenInfo(); loadVerifyBots()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
+            <button @click="showSettings = true; loadBotTokenInfo(); loadVerifyBots(); loadAIConfig()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
               </svg>
@@ -331,6 +331,47 @@
           </div>
         </div>
 
+        <!-- AI Assessment -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">AI Spam Assessment</h3>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Base URL</label>
+              <input type="text" x-model="aiForm.base_url" placeholder="https://api.openai.com"
+                class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition font-mono">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">API Key</label>
+              <input type="password" x-model="aiForm.api_key" placeholder="sk-..."
+                class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition font-mono">
+              <div x-show="aiConfigInfo.api_key" class="text-xs text-gray-500 mt-1">
+                Current: <span x-text="aiConfigInfo.api_key" class="font-mono"></span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Model Name</label>
+              <input type="text" x-model="aiForm.model" placeholder="gpt-4o-mini"
+                class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition font-mono">
+            </div>
+            <div class="flex gap-2">
+              <button @click="saveAIConfig()"
+                class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded transition"
+                :disabled="settingsLoading">
+                Save AI Config
+              </button>
+              <button @click="testAIConfig()"
+                class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 px-4 rounded transition"
+                :disabled="aiTestLoading">
+                <span x-show="!aiTestLoading">Test</span>
+                <span x-show="aiTestLoading">Testing...</span>
+              </button>
+            </div>
+            <div x-show="aiTestResult !== ''" class="text-xs rounded px-3 py-2"
+              :class="aiTestOk ? 'text-green-400 bg-green-900/20' : 'text-red-400 bg-red-900/20'"
+              x-text="aiTestResult"></div>
+          </div>
+        </div>
+
         <!-- Change Username -->
         <div>
           <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Change Username</h3>
@@ -411,7 +452,7 @@
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
           'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND',
           'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
-          'QUOTE', 'NEW_MSG', 'NEW_USER'
+          'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS'
         ],
         
         sseSource: null,
@@ -429,6 +470,12 @@
         newVerifyBotLabel: '',
         newUsers: [],
         newUserCount: 0,
+
+        aiForm: { base_url: '', api_key: '', model: '' },
+        aiConfigInfo: { base_url: '', api_key: '', model: '' },
+        aiTestLoading: false,
+        aiTestResult: '',
+        aiTestOk: false,
 
         init() {
           this.connectSSE();
@@ -714,6 +761,71 @@
           } catch (e) {}
         },
 
+        async loadAIConfig() {
+          try {
+            const r = await fetch('/api/config/ai', { headers: this.authHeaders() });
+            if (r.ok) {
+              const d = await r.json();
+              this.aiConfigInfo = d;
+              this.aiForm.base_url = d.base_url || '';
+              this.aiForm.model = d.model || '';
+              this.aiForm.api_key = '';
+            }
+          } catch (e) {}
+        },
+
+        async saveAIConfig() {
+          this.settingsError = '';
+          this.settingsSuccess = '';
+          this.settingsLoading = true;
+          try {
+            const body = {
+              base_url: this.aiForm.base_url.trim(),
+              api_key: this.aiForm.api_key.trim(),
+              model: this.aiForm.model.trim(),
+            };
+            const r = await fetch('/api/config/ai', {
+              method: 'POST',
+              headers: this.authHeaders(),
+              body: JSON.stringify(body)
+            });
+            if (r.ok) {
+              this.settingsSuccess = 'AI config saved';
+              this.loadAIConfig();
+            } else {
+              const d = await r.json();
+              this.settingsError = d.error || 'Failed to save AI config';
+            }
+          } catch (e) {
+            this.settingsError = 'Network error';
+          }
+          this.settingsLoading = false;
+        },
+
+        async testAIConfig() {
+          this.aiTestLoading = true;
+          this.aiTestResult = '';
+          this.aiTestOk = false;
+          try {
+            const r = await fetch('/api/config/ai/test', {
+              method: 'POST',
+              headers: this.authHeaders()
+            });
+            const d = await r.json();
+            if (d.ok) {
+              this.aiTestOk = true;
+              this.aiTestResult = 'Connection successful!';
+            } else {
+              this.aiTestOk = false;
+              this.aiTestResult = d.error || 'Test failed';
+            }
+          } catch (e) {
+            this.aiTestOk = false;
+            this.aiTestResult = 'Network error';
+          }
+          this.aiTestLoading = false;
+        },
+
         async loadNewUsers() {
           try {
             const r = await fetch('/api/config/new-users', { headers: this.authHeaders() });
@@ -741,6 +853,9 @@
           this.botTokenInput = '';
           this.newVerifyBotId = '';
           this.newVerifyBotLabel = '';
+          this.aiForm = { base_url: '', api_key: '', model: '' };
+          this.aiTestResult = '';
+          this.aiTestOk = false;
         },
 
         connectSSE() {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mymmrac/telego"
+	"github.com/spam-observer/internal/ai"
 	"github.com/spam-observer/internal/logstream"
 	"github.com/spam-observer/internal/tracker"
 )
@@ -19,6 +20,7 @@ type Monitor struct {
 	tracker    *tracker.Tracker
 	bot        atomic.Pointer[telego.Bot]
 	verifyBots func() map[int64]struct{}
+	aiConfig   func() *ai.Config
 }
 
 func New(
@@ -27,6 +29,7 @@ func New(
 	enabled func() bool,
 	t *tracker.Tracker,
 	verifyBots func() map[int64]struct{},
+	aiConfig func() *ai.Config,
 ) *Monitor {
 	return &Monitor{
 		broker:     broker,
@@ -34,6 +37,7 @@ func New(
 		enabled:    enabled,
 		tracker:    t,
 		verifyBots: verifyBots,
+		aiConfig:   aiConfig,
 	}
 }
 
@@ -101,6 +105,56 @@ func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio s
 		IsNew:     true,
 		Message: fmt.Sprintf("New user: %s (@%s, Bio: %s)",
 			userRef(userID, displayName), username, bioDisplay),
+	})
+
+	go m.assessUserSpam(userID, chatID, displayName, username, bio)
+}
+
+func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bio string) {
+	if m.aiConfig == nil {
+		return
+	}
+	cfg := m.aiConfig()
+	if cfg == nil || cfg.BaseURL == "" || cfg.APIKey == "" || cfg.Model == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	bioDisplay := bio
+	if bioDisplay == "" {
+		bioDisplay = "(none)"
+	}
+
+	result, err := ai.AssessUser(ctx, *cfg, displayName, username, bio)
+	if err != nil {
+		m.broker.Publish(logstream.Entry{
+			Timestamp: time.Now(),
+			Level:     "WARN",
+			Category:  "AI_ASSESS",
+			ChatID:    chatID,
+			UserID:    userID,
+			Username:  username,
+			IsNew:     true,
+			Message: fmt.Sprintf("AI assessment failed for %s (@%s): %v (%.1fs)",
+				userRef(userID, displayName), username, err, 0.0),
+		})
+		return
+	}
+
+	m.broker.Publish(logstream.Entry{
+		Timestamp: time.Now(),
+		Level:     "INFO",
+		Category:  "AI_ASSESS",
+		ChatID:    chatID,
+		UserID:    userID,
+		Username:  username,
+		IsNew:     true,
+		Message: fmt.Sprintf("AI spam risk for %s (@%s, Bio: %s): %s — %s (%.1fs)",
+			userRef(userID, displayName), username, bioDisplay,
+			result.RiskLevel, result.Reason,
+			result.Duration.Seconds()),
 	})
 }
 

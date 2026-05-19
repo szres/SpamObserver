@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/spam-observer/internal/ai"
 	"github.com/spam-observer/internal/auth"
 	"github.com/spam-observer/internal/db"
 	"github.com/spam-observer/internal/logstream"
@@ -69,6 +70,9 @@ func (h *Handler) Register(app *fiber.App) {
 	configGroup.Post("/verify-bots", h.handleAddVerifyBot)
 	configGroup.Delete("/verify-bots/:botId", h.handleRemoveVerifyBot)
 	configGroup.Get("/new-users", h.handleListNewUsers)
+	configGroup.Get("/ai", h.handleGetAIConfig)
+	configGroup.Post("/ai", h.handleSetAIConfig)
+	configGroup.Post("/ai/test", h.handleTestAIConfig)
 }
 
 func (h *Handler) handleLogin(c fiber.Ctx) error {
@@ -386,6 +390,41 @@ func (h *Handler) handleListNewUsers(c fiber.Ctx) error {
 		users = []tracker.UserInfo{}
 	}
 	return c.JSON(users)
+}
+
+func (h *Handler) handleGetAIConfig(c fiber.Ctx) error {
+	cfg := h.store.GetAIConfigMasked()
+	return c.JSON(cfg)
+}
+
+func (h *Handler) handleSetAIConfig(c fiber.Ctx) error {
+	var body db.AIConfig
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if err := h.store.SetAIConfig(body); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save AI config"})
+	}
+	h.broker.Publish(logstream.Info("CONFIG", "AI config updated (model: %s)", body.Model))
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) handleTestAIConfig(c fiber.Ctx) error {
+	cfg, err := h.store.GetAIConfig()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get AI config"})
+	}
+	if cfg.BaseURL == "" || cfg.APIKey == "" || cfg.Model == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "AI config incomplete"})
+	}
+
+	ctx := c.Context()
+	aiCfg := ai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
+	testErr := ai.TestConnection(ctx, aiCfg)
+	if testErr != nil {
+		return c.JSON(fiber.Map{"ok": false, "error": testErr.Error()})
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 func InitAdmin(store *db.Store) error {

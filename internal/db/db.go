@@ -91,6 +91,9 @@ func (s *Store) migrate() error {
 
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_enabled INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_token TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''")
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS new_users (
@@ -451,6 +454,47 @@ func (s *Store) GetVerificationBotIDs() map[int64]struct{} {
 		m[id] = struct{}{}
 	}
 	return m
+}
+
+type AIConfig struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
+func (s *Store) GetAIConfig() (*AIConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cfg := &AIConfig{}
+	err := s.db.QueryRow("SELECT ai_base_url, ai_api_key, ai_model FROM admin_settings WHERE id = 1").Scan(&cfg.BaseURL, &cfg.APIKey, &cfg.Model)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func (s *Store) SetAIConfig(cfg AIConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE admin_settings SET ai_base_url = ?, ai_api_key = ?, ai_model = ? WHERE id = 1",
+		cfg.BaseURL, cfg.APIKey, cfg.Model)
+	return err
+}
+
+func (s *Store) GetAIConfigMasked() *AIConfig {
+	cfg, err := s.GetAIConfig()
+	if err != nil {
+		return &AIConfig{}
+	}
+	masked := *cfg
+	if len(masked.APIKey) > 8 {
+		masked.APIKey = masked.APIKey[:4] + "..." + masked.APIKey[len(masked.APIKey)-4:]
+	} else if masked.APIKey != "" {
+		masked.APIKey = "***"
+	}
+	return &masked
 }
 
 func (s *Store) InsertLog(e logstream.Entry) error {

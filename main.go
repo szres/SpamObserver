@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/mymmrac/telego"
 	"github.com/mymmrac/telego/telegohandler"
+	"github.com/spam-observer/internal/ai"
 	"github.com/spam-observer/internal/auth"
 	"github.com/spam-observer/internal/bot"
 	"github.com/spam-observer/internal/db"
@@ -99,7 +100,17 @@ func main() {
 	})
 
 	updatesChan := make(chan telego.Update, 256)
-	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs)
+	aiConfigFn := func() *ai.Config {
+		cfg, err := store.GetAIConfig()
+		if err != nil {
+			return nil
+		}
+		if cfg.BaseURL == "" || cfg.APIKey == "" || cfg.Model == "" {
+			return nil
+		}
+		return &ai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
+	}
+	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn)
 
 	var (
 		botMu     sync.Mutex
