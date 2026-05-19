@@ -40,6 +40,18 @@ generate_token() {
   fi
 }
 
+generate_webhook_token() {
+  local bytes="$1"
+  # Telegram secret_token allows only [A-Za-z0-9_-]
+  local raw
+  if command -v openssl &>/dev/null; then
+    raw="$(openssl rand -base64 "$((bytes * 2))" | tr -d '\n')"
+  else
+    raw="$(head -c "$((bytes * 2))" /dev/urandom | base64 | tr -d '\n')"
+  fi
+  echo "$raw" | tr -dc 'A-Za-z0-9_-' | head -c "$bytes"
+}
+
 print_token() {
   local label="$1"
   local value="$2"
@@ -52,13 +64,13 @@ echo "-------------------------------------------"
 
 case "$TARGET" in
   webhook)
-    print_token "WEBHOOK_SECRET" "$(generate_token "$BYTES")"
+    print_token "WEBHOOK_SECRET" "$(generate_webhook_token "$BYTES")"
     ;;
   jwt)
     print_token "JWT_SECRET" "$(generate_token "$BYTES")"
     ;;
   all)
-    print_token "WEBHOOK_SECRET" "$(generate_token "$BYTES")"
+    print_token "WEBHOOK_SECRET" "$(generate_webhook_token "$BYTES")"
     print_token "JWT_SECRET" "$(generate_token "$BYTES")"
     ;;
 esac
