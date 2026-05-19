@@ -195,6 +195,7 @@
                 <span class="shrink-0 w-24 text-cyan-400" x-text="'[' + log.category + ']'"></span>
                 <span class="text-gray-200 break-all" x-text="log.message"></span>
                 <span x-show="log.is_new" class="shrink-0 text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-medium ml-1">NEW</span>
+                <span x-show="log.mutual_groups > 0" class="shrink-0 text-xs bg-orange-600 text-white px-1.5 py-0.5 rounded font-medium ml-1" x-text="'MG:' + log.mutual_groups"></span>
                 <span x-show="log.chat_id" class="shrink-0 text-gray-600 ml-auto" x-text="'chat:' + log.chat_id"></span>
               </div>
             </template>
@@ -402,10 +403,10 @@
         botReady: false,
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
-          'BOT_MSG', 'AD_LINK', 'AD_KEYWORD', 'BUTTON', 'URL_ENTITY',
-          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND', 'COMMAND',
+          'BOT_MSG', 'BUTTON', 'URL_ENTITY',
+          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND',
           'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
-          'QUOTE'
+          'QUOTE', 'NEW_MSG'
         ],
         
         sseSource: null,

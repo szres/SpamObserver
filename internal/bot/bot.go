@@ -156,15 +156,12 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 		})
 	}
 
-	if msg.Text != "" || msg.Caption != "" {
-		m.analyzeContent(msg)
-	}
-
 	if msg.Entities != nil || msg.CaptionEntities != nil {
 		m.analyzeEntities(msg)
 	}
 
 	m.logQuote(msg, chatID)
+	m.logNewUserMessage(msg, chatID)
 }
 
 func (m *Monitor) fetchUserBio(userID int64) string {
@@ -259,6 +256,91 @@ func (m *Monitor) logQuote(msg *telego.Message, chatID int64) {
 		Message:   strings.Join(parts, " "),
 		Raw:       strings.Join(rawParts, "\n"),
 	})
+}
+
+func (m *Monitor) logNewUserMessage(msg *telego.Message, chatID int64) {
+	if msg.From == nil || msg.From.IsBot {
+		return
+	}
+	if !m.isNewUser(msg.From.ID) {
+		return
+	}
+
+	mutualCount := m.countMutualGroups(msg.From.ID)
+
+	content := extractText(msg)
+	if content == "" {
+		content = describeMedia(msg)
+	}
+
+	m.broker.Publish(logstream.Entry{
+		Timestamp:    time.Unix(int64(msg.Date), 0),
+		Level:        "INFO",
+		Category:     "NEW_MSG",
+		ChatID:       chatID,
+		UserID:       msg.From.ID,
+		Username:     msg.From.Username,
+		IsNew:        true,
+		MutualGroups: mutualCount,
+		Message: fmt.Sprintf("NEW user %s (mutual groups: %d): %s",
+			memberDisplayName(*msg.From), mutualCount, truncate(content, 300)),
+		Raw: content,
+	})
+}
+
+func (m *Monitor) countMutualGroups(userID int64) int {
+	b := m.bot.Load()
+	if b == nil {
+		return 0
+	}
+	groups := m.monitored()
+	if len(groups) == 0 {
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	count := 0
+	for groupID := range groups {
+		member, err := b.GetChatMember(ctx, &telego.GetChatMemberParams{
+			ChatID: telego.ChatID{ID: groupID},
+			UserID: userID,
+		})
+		if err != nil {
+			continue
+		}
+		status := member.MemberStatus()
+		if status != telego.MemberStatusLeft && status != telego.MemberStatusBanned {
+			count++
+		}
+	}
+	return count
+}
+
+func describeMedia(msg *telego.Message) string {
+	if msg.Photo != nil {
+		return "<photo>"
+	}
+	if msg.Video != nil {
+		return "<video>"
+	}
+	if msg.Document != nil {
+		return "<document>"
+	}
+	if msg.Sticker != nil {
+		return "<sticker>"
+	}
+	if msg.Voice != nil {
+		return "<voice>"
+	}
+	if msg.VideoNote != nil {
+		return "<video_note>"
+	}
+	if msg.Animation != nil {
+		return "<gif>"
+	}
+	return "<non-text>"
 }
 
 func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
@@ -374,71 +456,6 @@ func (m *Monitor) processCallbackQuery(cq *telego.CallbackQuery) {
 			memberDisplayName(from), cq.Data),
 		Raw: cq.Data,
 	})
-}
-
-func (m *Monitor) analyzeContent(msg *telego.Message) {
-	text := extractText(msg)
-	if text == "" {
-		return
-	}
-
-	lower := strings.ToLower(text)
-
-	adIndicators := []struct {
-		pattern  string
-		category string
-	}{
-		{"t.me/", "AD_LINK"},
-		{"joinchat", "AD_LINK"},
-		{"addurl", "AD_LINK"},
-		{"crypto", "AD_KEYWORD"},
-		{"invest", "AD_KEYWORD"},
-		{"earn money", "AD_KEYWORD"},
-		{"free gift", "AD_KEYWORD"},
-		{"click here", "AD_KEYWORD"},
-		{"dm me", "AD_KEYWORD"},
-		{"whatsapp", "AD_KEYWORD"},
-		{"signal group", "AD_KEYWORD"},
-		{"promo", "AD_KEYWORD"},
-		{"discount", "AD_KEYWORD"},
-		{"@admin", "MENTION"},
-		{"/verify", "COMMAND"},
-		{"/captcha", "COMMAND"},
-		{"/ban", "COMMAND"},
-		{"/kick", "COMMAND"},
-		{"/mute", "COMMAND"},
-		{"/restrict", "COMMAND"},
-		{"/report", "COMMAND"},
-	}
-
-	for _, indicator := range adIndicators {
-		if strings.Contains(lower, indicator.pattern) {
-			userID := int64(0)
-			username := ""
-			if msg.From != nil {
-				userID = msg.From.ID
-				username = msg.From.Username
-			}
-
-			level := "INFO"
-			if indicator.category == "AD_LINK" || indicator.category == "AD_KEYWORD" {
-				level = "WARN"
-			}
-
-			m.broker.Publish(logstream.Entry{
-				Timestamp: time.Unix(int64(msg.Date), 0),
-				Level:     level,
-				Category:  indicator.category,
-				ChatID:    msg.Chat.ID,
-				UserID:    userID,
-				Username:  username,
-				IsNew:     m.isNewUser(userID),
-				Message: fmt.Sprintf("Detected [%s] in message: %s",
-					indicator.category, truncate(text, 200)),
-				Raw: text,
-			})
-		}
-	}
 }
 
 func (m *Monitor) analyzeEntities(msg *telego.Message) {

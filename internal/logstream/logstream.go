@@ -18,8 +18,9 @@ type Entry struct {
 	ChatID    int64     `json:"chat_id,omitempty"`
 	UserID    int64     `json:"user_id,omitempty"`
 	Username  string    `json:"username,omitempty"`
-	IsNew     bool      `json:"is_new,omitempty"`
-	Message   string    `json:"message"`
+	IsNew        bool      `json:"is_new,omitempty"`
+	MutualGroups int       `json:"mutual_groups,omitempty"`
+	Message      string    `json:"message"`
 	Raw       string    `json:"raw,omitempty"`
 }
 
