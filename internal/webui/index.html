@@ -167,6 +167,7 @@
             </h2>
             <div class="flex items-center gap-2">
               <input type="text" x-model="searchQuery" placeholder="Search logs..." autocomplete="off" name="log-search"
+                readonly onfocus="this.removeAttribute('readonly')"
                 class="bg-dark-900 border border-dark-600 rounded px-2 py-1 text-xs text-white w-40 focus:outline-none focus:border-blue-500">
               <button @click="autoScroll = !autoScroll"
                 :class="autoScroll ? 'text-green-400' : 'text-gray-500'"
