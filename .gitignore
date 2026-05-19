@@ -1,0 +1,6 @@
+spam-observer
+*.db
+*.db-wal
+*.db-shm
+data/
+.env

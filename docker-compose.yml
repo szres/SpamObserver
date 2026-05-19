@@ -1,0 +1,28 @@
+services:
+  spam-observer:
+    build: .
+    container_name: spam-observer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      PORT: "8080"
+      DB_PATH: /data/spam-observer.db
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-spamo-whsec}
+      PUBLIC_URL: ${PUBLIC_URL}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin}
+      JWT_SECRET: ${JWT_SECRET:-}
+    volumes:
+      - spam-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  spam-data:
+    driver: local

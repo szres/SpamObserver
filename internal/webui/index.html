@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpamObserver - Telegram Anti-Spam Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: { 900: '#0d1117', 800: '#161b22', 700: '#21262d', 600: '#30363d', 500: '#484f58' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .log-line { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
+    .log-terminal { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
+    .log-terminal::-webkit-scrollbar { width: 6px; }
+    .log-terminal::-webkit-scrollbar-track { background: #0d1117; }
+    .log-terminal::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  </style>
+</head>
+<body class="bg-dark-900 text-gray-200 min-h-screen" x-data="app()" x-init="init()" x-cloak>
+
+  <!-- Login Screen -->
+  <div x-show="!authenticated" x-transition class="flex items-center justify-center min-h-screen">
+    <div class="bg-dark-800 border border-dark-600 rounded-lg p-8 w-full max-w-sm shadow-xl">
+      <div class="text-center mb-6">
+        <h1 class="text-2xl font-bold text-white mb-1">SpamObserver</h1>
+        <p class="text-gray-400 text-sm">Telegram Anti-Spam Monitor</p>
+      </div>
+      <form @submit.prevent="login()">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-400 mb-1">Username</label>
+          <input type="text" x-model="loginForm.username"
+            class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition"
+            autocomplete="username">
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-400 mb-1">Password</label>
+          <input type="password" x-model="loginForm.password"
+            class="w-full bg-dark-900 border border-dark-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition"
+            autocomplete="current-password">
+        </div>
+        <div x-show="loginError" class="mb-4 text-red-400 text-sm" x-text="loginError"></div>
+        <button type="submit"
+          class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition"
+          :disabled="loginLoading">
+          <span x-show="!loginLoading">Sign In</span>
+          <span x-show="loginLoading">Authenticating...</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div x-show="authenticated" x-transition class="max-w-7xl mx-auto px-4 py-6">
+    
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-3">
+        <div class="w-3 h-3 rounded-full bg-green-500 pulse-dot"></div>
+        <h1 class="text-xl font-bold text-white">SpamObserver</h1>
+        <span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">PASSIVE MONITOR</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-400" x-text="currentUser"></span>
+        <button @click="logout()" class="text-sm text-gray-500 hover:text-red-400 transition">Logout</button>
+      </div>
+    </header>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider">Groups Monitored</div>
+        <div class="text-2xl font-bold text-white mt-1" x-text="groups.length">0</div>
+      </div>
+      <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider">Events Logged</div>
+        <div class="text-2xl font-bold text-white mt-1" x-text="logs.length">0</div>
+      </div>
+      <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider">Warnings</div>
+        <div class="text-2xl font-bold text-yellow-400 mt-1" x-text="logs.filter(l => l.level === 'WARN').length">0</div>
+      </div>
+      <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider">SSE Status</div>
+        <div class="text-2xl font-bold mt-1" :class="sseConnected ? 'text-green-400' : 'text-red-400'" 
+          x-text="sseConnected ? 'LIVE' : 'DOWN'">DOWN</div>
+      </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Left: Groups Panel -->
+      <div class="lg:col-span-1">
+        <div class="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden">
+          <div class="px-4 py-3 border-b border-dark-600 flex items-center justify-between">
+            <h2 class="font-semibold text-white">Monitored Groups</h2>
+            <button @click="showAddGroup = !showAddGroup" 
+              class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded transition">
+              + Add
+            </button>
+          </div>
+          
+          <!-- Add Group Form -->
+          <div x-show="showAddGroup" x-transition class="px-4 py-3 border-b border-dark-600 bg-dark-700">
+            <form @submit.prevent="addGroup()" class="flex gap-2">
+              <input type="number" x-model="newChatId" placeholder="Chat ID (e.g. -1001234567890)"
+                class="flex-1 bg-dark-900 border border-dark-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+              <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm transition">Add</button>
+            </form>
+          </div>
+
+          <div class="divide-y divide-dark-600 max-h-80 overflow-y-auto">
+            <template x-if="groups.length === 0">
+              <div class="px-4 py-6 text-center text-gray-500 text-sm">No groups configured</div>
+            </template>
+            <template x-for="g in groups" :key="g.chat_id">
+              <div class="px-4 py-3 flex items-center justify-between hover:bg-dark-700 transition">
+                <div>
+                  <div class="text-sm font-mono text-white" x-text="g.chat_id"></div>
+                  <div class="text-xs text-gray-500" x-text="'Added: ' + new Date(g.added_at).toLocaleDateString()"></div>
+                </div>
+                <button @click="removeGroup(g.chat_id)" 
+                  class="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-dark-600 transition">
+                  Remove
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Quick Filters -->
+        <div class="bg-dark-800 border border-dark-600 rounded-lg mt-4 overflow-hidden">
+          <div class="px-4 py-3 border-b border-dark-600">
+            <h2 class="font-semibold text-white">Filters</h2>
+          </div>
+          <div class="p-4 space-y-2">
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="cat in availableCategories" :key="cat">
+                <button @click="toggleFilter(cat)"
+                  :class="activeFilters.includes(cat) ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+                  class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
+              </template>
+            </div>
+            <div x-show="activeFilters.length > 0" class="pt-2">
+              <button @click="activeFilters = []" class="text-xs text-gray-500 hover:text-white transition">Clear filters</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Log Terminal -->
+      <div class="lg:col-span-2">
+        <div class="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden flex flex-col" style="height: calc(100vh - 280px); min-height: 400px;">
+          <div class="px-4 py-3 border-b border-dark-600 flex items-center justify-between">
+            <h2 class="font-semibold text-white flex items-center gap-2">
+              Live Event Log
+              <span class="w-2 h-2 rounded-full bg-green-500 pulse-dot" x-show="sseConnected"></span>
+            </h2>
+            <div class="flex items-center gap-2">
+              <input type="text" x-model="searchQuery" placeholder="Search logs..."
+                class="bg-dark-900 border border-dark-600 rounded px-2 py-1 text-xs text-white w-40 focus:outline-none focus:border-blue-500">
+              <button @click="autoScroll = !autoScroll"
+                :class="autoScroll ? 'text-green-400' : 'text-gray-500'"
+                class="text-xs px-2 py-1 rounded hover:bg-dark-600 transition" title="Auto-scroll">
+                ↓ Auto
+              </button>
+              <button @click="clearLogs()" class="text-xs text-gray-500 hover:text-white px-2 py-1 rounded hover:bg-dark-600 transition">Clear</button>
+            </div>
+          </div>
+          
+          <div class="flex-1 overflow-y-auto log-terminal p-2" x-ref="logContainer">
+            <template x-if="filteredLogs.length === 0">
+              <div class="text-center text-gray-600 text-sm py-8">Waiting for events...</div>
+            </template>
+            <template x-for="(log, idx) in filteredLogs" :key="idx">
+              <div class="log-line flex gap-2 px-1 py-0.5 hover:bg-dark-700 rounded"
+                :class="{
+                  'text-gray-400': log.level === 'INFO',
+                  'text-yellow-400': log.level === 'WARN',
+                  'text-red-400': log.level === 'ERROR'
+                }">
+                <span class="text-gray-600 shrink-0 w-20" x-text="formatTime(log.timestamp)"></span>
+                <span class="shrink-0 w-12 text-right"
+                  :class="{
+                    'text-blue-400': log.level === 'INFO',
+                    'text-yellow-400': log.level === 'WARN',
+                    'text-red-400': log.level === 'ERROR'
+                  }" x-text="'[' + log.level + ']'"></span>
+                <span class="shrink-0 w-24 text-cyan-400" x-text="'[' + log.category + ']'"></span>
+                <span class="text-gray-200 break-all" x-text="log.message"></span>
+                <span x-show="log.chat_id" class="shrink-0 text-gray-600 ml-auto" x-text="'chat:' + log.chat_id"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function app() {
+      return {
+        authenticated: false,
+        currentUser: '',
+        loginForm: { username: '', password: '' },
+        loginError: '',
+        loginLoading: false,
+        
+        groups: [],
+        newChatId: '',
+        showAddGroup: false,
+        
+        logs: [],
+        sseConnected: false,
+        autoScroll: true,
+        searchQuery: '',
+        activeFilters: [],
+        availableCategories: [
+          'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
+          'BOT_MSG', 'AD_LINK', 'AD_KEYWORD', 'BUTTON', 'URL_ENTITY',
+          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND', 'COMMAND'
+        ],
+        
+        sseSource: null,
+
+        init() {
+          this.checkAuth();
+        },
+
+        async checkAuth() {
+          try {
+            const r = await fetch('/api/auth/me');
+            if (r.ok) {
+              const d = await r.json();
+              this.authenticated = true;
+              this.currentUser = d.username;
+              this.loadGroups();
+              this.connectSSE();
+            }
+          } catch (e) {}
+        },
+
+        async login() {
+          this.loginError = '';
+          this.loginLoading = true;
+          try {
+            const r = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.loginForm)
+            });
+            const d = await r.json();
+            if (r.ok) {
+              this.authenticated = true;
+              this.currentUser = d.username;
+              this.loginForm = { username: '', password: '' };
+              this.loadGroups();
+              this.connectSSE();
+            } else {
+              this.loginError = d.error || 'Login failed';
+            }
+          } catch (e) {
+            this.loginError = 'Network error';
+          }
+          this.loginLoading = false;
+        },
+
+        async logout() {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          this.authenticated = false;
+          this.currentUser = '';
+          if (this.sseSource) {
+            this.sseSource.close();
+            this.sseSource = null;
+          }
+        },
+
+        async loadGroups() {
+          try {
+            const r = await fetch('/api/config/groups');
+            if (r.ok) {
+              this.groups = await r.json() || [];
+            }
+          } catch (e) {}
+        },
+
+        async addGroup() {
+          const id = parseInt(this.newChatId);
+          if (isNaN(id)) return;
+          try {
+            const r = await fetch('/api/config/groups', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: id })
+            });
+            if (r.ok) {
+              this.newChatId = '';
+              this.showAddGroup = false;
+              this.loadGroups();
+            }
+          } catch (e) {}
+        },
+
+        async removeGroup(chatId) {
+          try {
+            await fetch('/api/config/groups/' + chatId, { method: 'DELETE' });
+            this.loadGroups();
+          } catch (e) {}
+        },
+
+        connectSSE() {
+          if (this.sseSource) {
+            this.sseSource.close();
+          }
+          this.sseSource = new EventSource('/api/logs/stream');
+          this.sseSource.onopen = () => { this.sseConnected = true; };
+          this.sseSource.onerror = () => {
+            this.sseConnected = false;
+            setTimeout(() => this.connectSSE(), 3000);
+          };
+          this.sseSource.addEventListener('log', (e) => {
+            try {
+              const entry = JSON.parse(e.data);
+              this.logs.push(entry);
+              if (this.logs.length > 2000) {
+                this.logs = this.logs.slice(-1000);
+              }
+              if (this.autoScroll) {
+                this.$nextTick(() => {
+                  const c = this.$refs.logContainer;
+                  if (c) c.scrollTop = c.scrollHeight;
+                });
+              }
+            } catch (err) {}
+          });
+          this.sseSource.addEventListener('history', (e) => {
+            try {
+              const entries = JSON.parse(e.data);
+              this.logs = entries;
+              if (this.autoScroll) {
+                this.$nextTick(() => {
+                  const c = this.$refs.logContainer;
+                  if (c) c.scrollTop = c.scrollHeight;
+                });
+              }
+            } catch (err) {}
+          });
+        },
+
+        toggleFilter(cat) {
+          const idx = this.activeFilters.indexOf(cat);
+          if (idx >= 0) {
+            this.activeFilters.splice(idx, 1);
+          } else {
+            this.activeFilters.push(cat);
+          }
+        },
+
+        clearLogs() {
+          this.logs = [];
+        },
+
+        get filteredLogs() {
+          let result = this.logs;
+          if (this.activeFilters.length > 0) {
+            result = result.filter(l => this.activeFilters.includes(l.category));
+          }
+          if (this.searchQuery.trim()) {
+            const q = this.searchQuery.toLowerCase();
+            result = result.filter(l => 
+              l.message.toLowerCase().includes(q) || 
+              l.category.toLowerCase().includes(q) ||
+              (l.username && l.username.toLowerCase().includes(q))
+            );
+          }
+          return result.slice(-200);
+        },
+
+        formatTime(ts) {
+          if (!ts) return '';
+          const d = new Date(ts);
+          return d.toLocaleTimeString('en-GB', { hour12: false });
+        }
+      };
+    }
+  </script>
+</body>
+</html>
