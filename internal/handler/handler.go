@@ -13,6 +13,7 @@ import (
 	"github.com/spam-observer/internal/auth"
 	"github.com/spam-observer/internal/db"
 	"github.com/spam-observer/internal/logstream"
+	"github.com/spam-observer/internal/tracker"
 	"github.com/spam-observer/internal/webui"
 )
 
@@ -22,15 +23,17 @@ type Handler struct {
 	jwt        *auth.JWTManager
 	botEnabled *atomic.Bool
 	restartBot func(token string) error
+	tracker    *tracker.Tracker
 }
 
-func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool, restartBot func(token string) error) *Handler {
+func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool, restartBot func(token string) error, t *tracker.Tracker) *Handler {
 	return &Handler{
 		store:      store,
 		broker:     broker,
 		jwt:        jwt,
 		botEnabled: botEnabled,
 		restartBot: restartBot,
+		tracker:    t,
 	}
 }
 
@@ -61,6 +64,10 @@ func (h *Handler) Register(app *fiber.App) {
 	configGroup.Post("/bot/token", h.handleSetBotToken)
 	configGroup.Post("/auth/change-password", h.handleChangePassword)
 	configGroup.Post("/auth/change-username", h.handleChangeUsername)
+	configGroup.Get("/verify-bots", h.handleListVerifyBots)
+	configGroup.Post("/verify-bots", h.handleAddVerifyBot)
+	configGroup.Delete("/verify-bots/:botId", h.handleRemoveVerifyBot)
+	configGroup.Get("/new-users", h.handleListNewUsers)
 }
 
 func (h *Handler) handleLogin(c fiber.Ctx) error {
@@ -323,6 +330,56 @@ func (h *Handler) handleChangeUsername(c fiber.Ctx) error {
 
 	h.broker.Publish(logstream.Info("CONFIG", "Admin username changed to %s", body.NewUsername))
 	return c.JSON(fiber.Map{"ok": true, "username": body.NewUsername})
+}
+
+func (h *Handler) handleListVerifyBots(c fiber.Ctx) error {
+	bots, err := h.store.ListVerificationBots()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list verification bots"})
+	}
+	if bots == nil {
+		bots = []db.VerificationBot{}
+	}
+	return c.JSON(bots)
+}
+
+func (h *Handler) handleAddVerifyBot(c fiber.Ctx) error {
+	var body struct {
+		BotID int64  `json:"bot_id"`
+		Label string `json:"label"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if body.BotID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bot_id required"})
+	}
+	if err := h.store.AddVerificationBot(body.BotID, body.Label); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to add verification bot"})
+	}
+	h.broker.Publish(logstream.Info("CONFIG", "Verification bot %d (%s) added", body.BotID, body.Label))
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) handleRemoveVerifyBot(c fiber.Ctx) error {
+	botIDStr := c.Params("botId")
+	botID, err := strconv.ParseInt(botIDStr, 10, 64)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid bot_id"})
+	}
+	if err := h.store.RemoveVerificationBot(botID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to remove verification bot"})
+	}
+	h.broker.Publish(logstream.Info("CONFIG", "Verification bot %d removed", botID))
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) handleListNewUsers(c fiber.Ctx) error {
+	users := h.tracker.GetAllNew()
+	if users == nil {
+		users = []tracker.UserInfo{}
+	}
+	return c.JSON(users)
 }
 
 func InitAdmin(store *db.Store) error {

@@ -48,7 +48,7 @@
         <template x-if="authenticated">
           <div class="flex items-center gap-3">
             <span class="text-sm text-gray-400" x-text="currentUser"></span>
-            <button @click="showSettings = true; loadBotTokenInfo()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
+            <button @click="showSettings = true; loadBotTokenInfo(); loadVerifyBots()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
               </svg>
@@ -64,7 +64,7 @@
   <div class="max-w-7xl mx-auto px-4 pb-6">
 
     <!-- Stats Row -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
       <div class="bg-dark-800 border border-dark-600 rounded-lg p-4" x-show="authenticated">
         <div class="text-xs text-gray-500 uppercase tracking-wider">Groups Monitored</div>
         <div class="text-2xl font-bold text-white mt-1" x-text="groups.length">0</div>
@@ -81,6 +81,10 @@
         <div class="text-xs text-gray-500 uppercase tracking-wider">Bot Status</div>
         <div class="text-2xl font-bold mt-1" :class="botReady && botEnabled ? 'text-green-400' : (botReady ? 'text-red-400' : 'text-yellow-400')" 
           x-text="!botReady ? 'NO TOKEN' : (botEnabled ? 'ACTIVE' : 'PAUSED')">NO TOKEN</div>
+      </div>
+      <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider">NEW Users (24h)</div>
+        <div class="text-2xl font-bold text-purple-400 mt-1" x-text="newUsers.length">0</div>
       </div>
     </div>
 
@@ -131,6 +135,11 @@
             <h2 class="font-semibold text-white">Filters</h2>
           </div>
           <div class="p-4 space-y-2">
+            <div class="flex items-center gap-2 pb-2 border-b border-dark-600">
+              <button @click="filterNewOnly = !filterNewOnly"
+                :class="filterNewOnly ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+                class="text-xs px-2 py-1 rounded transition font-medium">NEW Users Only</button>
+            </div>
             <div class="flex flex-wrap gap-1.5">
               <template x-for="cat in availableCategories" :key="cat">
                 <button @click="toggleFilter(cat)"
@@ -138,8 +147,8 @@
                   class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
               </template>
             </div>
-            <div x-show="activeFilters.length > 0" class="pt-2">
-              <button @click="activeFilters = []" class="text-xs text-gray-500 hover:text-white transition">Clear filters</button>
+            <div x-show="activeFilters.length > 0 || filterNewOnly" class="pt-2">
+              <button @click="activeFilters = []; filterNewOnly = false" class="text-xs text-gray-500 hover:text-white transition">Clear filters</button>
             </div>
           </div>
         </div>
@@ -185,6 +194,7 @@
                   }" x-text="'[' + log.level + ']'"></span>
                 <span class="shrink-0 w-24 text-cyan-400" x-text="'[' + log.category + ']'"></span>
                 <span class="text-gray-200 break-all" x-text="log.message"></span>
+                <span x-show="log.is_new" class="shrink-0 text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-medium ml-1">NEW</span>
                 <span x-show="log.chat_id" class="shrink-0 text-gray-600 ml-auto" x-text="'chat:' + log.chat_id"></span>
               </div>
             </template>
@@ -280,6 +290,41 @@
           </div>
         </div>
 
+        <!-- Verification Bots -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Verification Bots</h3>
+          <div class="space-y-3">
+            <form @submit.prevent="addVerifyBot()" class="flex gap-2">
+              <input type="number" x-model="newVerifyBotId" placeholder="Bot ID"
+                class="flex-1 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition font-mono">
+              <input type="text" x-model="newVerifyBotLabel" placeholder="Label (optional)"
+                class="flex-1 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition">
+              <button type="submit"
+                class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition"
+                :disabled="settingsLoading">
+                Add
+              </button>
+            </form>
+            <div class="divide-y divide-dark-600 max-h-40 overflow-y-auto rounded bg-dark-700">
+              <template x-if="verifyBots.length === 0">
+                <div class="px-3 py-4 text-center text-gray-500 text-xs">No verification bots configured</div>
+              </template>
+              <template x-for="b in verifyBots" :key="b.bot_id">
+                <div class="px-3 py-2 flex items-center justify-between hover:bg-dark-600 transition">
+                  <div>
+                    <div class="text-sm font-mono text-white" x-text="b.bot_id"></div>
+                    <div class="text-xs text-gray-500" x-text="b.label || '(no label)'"></div>
+                  </div>
+                  <button @click="removeVerifyBot(b.bot_id)"
+                    class="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-dark-600 transition">
+                    Remove
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
         <!-- Change Username -->
         <div>
           <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Change Username</h3>
@@ -352,12 +397,15 @@
         autoScroll: true,
         searchQuery: '',
         activeFilters: [],
+        filterNewOnly: false,
         botEnabled: true,
         botReady: false,
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'AD_LINK', 'AD_KEYWORD', 'BUTTON', 'URL_ENTITY',
-          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND', 'COMMAND'
+          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND', 'COMMAND',
+          'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
+          'QUOTE'
         ],
         
         sseSource: null,
@@ -370,10 +418,20 @@
         settingsSuccess: '',
         settingsLoading: false,
 
+        verifyBots: [],
+        newVerifyBotId: '',
+        newVerifyBotLabel: '',
+        newUsers: [],
+
         init() {
           this.connectSSE();
           this.fetchBotInfo();
           this.restoreSession();
+          setInterval(() => {
+            if (this.authenticated) {
+              this.loadNewUsers();
+            }
+          }, 60000);
         },
 
         authHeaders() {
@@ -395,6 +453,8 @@
               this.authenticated = true;
               this.currentUser = d.username;
               this.loadGroups();
+              this.loadVerifyBots();
+              this.loadNewUsers();
             } else {
               localStorage.removeItem(TOKEN_KEY);
             }
@@ -447,6 +507,8 @@
           this.authenticated = false;
           this.currentUser = '';
           this.groups = [];
+          this.verifyBots = [];
+          this.newUsers = [];
         },
 
         async loadGroups() {
@@ -605,12 +667,61 @@
           this.settingsLoading = false;
         },
 
+        async loadVerifyBots() {
+          try {
+            const r = await fetch('/api/config/verify-bots', { headers: this.authHeaders() });
+            if (r.ok) {
+              this.verifyBots = await r.json() || [];
+            }
+          } catch (e) {}
+        },
+
+        async addVerifyBot() {
+          const id = parseInt(this.newVerifyBotId);
+          if (isNaN(id)) return;
+          this.settingsLoading = true;
+          try {
+            const r = await fetch('/api/config/verify-bots', {
+              method: 'POST',
+              headers: this.authHeaders(),
+              body: JSON.stringify({ bot_id: id, label: this.newVerifyBotLabel.trim() })
+            });
+            if (r.ok) {
+              this.newVerifyBotId = '';
+              this.newVerifyBotLabel = '';
+              this.loadVerifyBots();
+            }
+          } catch (e) {}
+          this.settingsLoading = false;
+        },
+
+        async removeVerifyBot(botId) {
+          try {
+            await fetch('/api/config/verify-bots/' + botId, {
+              method: 'DELETE',
+              headers: this.authHeaders()
+            });
+            this.loadVerifyBots();
+          } catch (e) {}
+        },
+
+        async loadNewUsers() {
+          try {
+            const r = await fetch('/api/config/new-users', { headers: this.authHeaders() });
+            if (r.ok) {
+              this.newUsers = await r.json() || [];
+            }
+          } catch (e) {}
+        },
+
         resetSettings() {
           this.settingsError = '';
           this.settingsSuccess = '';
           this.passwordForm = { current_password: '', new_password: '', confirm_password: '' };
           this.usernameForm = { new_username: '' };
           this.botTokenInput = '';
+          this.newVerifyBotId = '';
+          this.newVerifyBotLabel = '';
         },
 
         connectSSE() {
@@ -667,6 +778,9 @@
 
         get filteredLogs() {
           let result = this.logs;
+          if (this.filterNewOnly) {
+            result = result.filter(l => l.is_new);
+          }
           if (this.activeFilters.length > 0) {
             result = result.filter(l => this.activeFilters.includes(l.category));
           }

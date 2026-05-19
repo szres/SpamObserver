@@ -20,6 +20,7 @@ import (
 	"github.com/spam-observer/internal/db"
 	"github.com/spam-observer/internal/handler"
 	"github.com/spam-observer/internal/logstream"
+	"github.com/spam-observer/internal/tracker"
 )
 
 const webhookPath = "/api/webhook/tg"
@@ -63,6 +64,9 @@ func main() {
 
 	jwt := auth.NewJWTManager()
 
+	trk := tracker.New(store)
+	defer trk.Stop()
+
 	botEnabled := new(atomic.Bool)
 	if enabled, err := store.GetBotEnabled(); err == nil {
 		botEnabled.Store(enabled)
@@ -80,7 +84,7 @@ func main() {
 	})
 
 	updatesChan := make(chan telego.Update, 256)
-	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load)
+	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs)
 
 	var (
 		botMu     sync.Mutex
@@ -104,6 +108,7 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("create bot: %w", err)
 		}
+		monitor.SetBot(telegoBot)
 
 		botCtx, botCancel = context.WithCancel(context.Background())
 
@@ -163,7 +168,7 @@ func main() {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	h := handler.New(store, broker, jwt, botEnabled, startBot)
+	h := handler.New(store, broker, jwt, botEnabled, startBot, trk)
 	h.Register(app)
 
 	broker.Publish(logstream.Info("SYSTEM", "SpamObserver starting on port %s", port))

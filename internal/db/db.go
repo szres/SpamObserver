@@ -26,6 +26,21 @@ type MonitoredGroup struct {
 	AddedAt   time.Time
 }
 
+type NewUserInfo struct {
+	UserID      int64     `json:"user_id"`
+	ChatID      int64     `json:"chat_id"`
+	DisplayName string    `json:"display_name"`
+	Username    string    `json:"username"`
+	Bio         string    `json:"bio"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+type VerificationBot struct {
+	BotID    int64     `json:"bot_id"`
+	Label    string    `json:"label"`
+	AddedAt  time.Time `json:"added_at"`
+}
+
 type Store struct {
 	mu sync.RWMutex
 	db *sql.DB
@@ -66,7 +81,7 @@ func (s *Store) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS monitored_groups (
 			chat_id INTEGER PRIMARY KEY,
-			added_at DATETIME NOT NULL DEFAULT (datetime('now'))
+			added_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 		);
 	`)
 	if err != nil {
@@ -75,6 +90,31 @@ func (s *Store) migrate() error {
 
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_enabled INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_token TEXT NOT NULL DEFAULT ''")
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS new_users (
+			user_id INTEGER NOT NULL,
+			chat_id INTEGER NOT NULL,
+			display_name TEXT NOT NULL DEFAULT '',
+			username TEXT NOT NULL DEFAULT '',
+			bio TEXT NOT NULL DEFAULT '',
+			joined_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+			PRIMARY KEY (user_id, chat_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS verification_bots (
+			bot_id INTEGER PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT '',
+			added_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, _ = s.db.Exec("UPDATE monitored_groups SET added_at = added_at || 'Z' WHERE added_at NOT LIKE '%Z'")
+	_, _ = s.db.Exec("UPDATE new_users SET joined_at = joined_at || 'Z' WHERE joined_at NOT LIKE '%Z'")
+	_, _ = s.db.Exec("UPDATE verification_bots SET added_at = added_at || 'Z' WHERE added_at NOT LIKE '%Z'")
 
 	return nil
 }
@@ -257,6 +297,125 @@ func (s *Store) GetMonitoredIDs() map[int64]struct{} {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query("SELECT chat_id FROM monitored_groups")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	m := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		m[id] = struct{}{}
+	}
+	return m
+}
+
+func (s *Store) AddNewUser(userID, chatID int64, displayName, username, bio string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(
+		"INSERT OR REPLACE INTO new_users (user_id, chat_id, display_name, username, bio, joined_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+		userID, chatID, displayName, username, bio,
+	)
+	return err
+}
+
+func (s *Store) GetNewUsers() ([]NewUserInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT user_id, chat_id, display_name, username, bio, joined_at FROM new_users WHERE joined_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-24 hours') ORDER BY joined_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []NewUserInfo
+	for rows.Next() {
+		var u NewUserInfo
+		if err := rows.Scan(&u.UserID, &u.ChatID, &u.DisplayName, &u.Username, &u.Bio, &u.JoinedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) GetNewUserIDs() (map[int64]struct{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT DISTINCT user_id FROM new_users WHERE joined_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-24 hours')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	m := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		m[id] = struct{}{}
+	}
+	return m, rows.Err()
+}
+
+func (s *Store) PurgeExpiredNewUsers() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("DELETE FROM new_users WHERE joined_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-24 hours')")
+	return err
+}
+
+func (s *Store) AddVerificationBot(botID int64, label string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("INSERT OR REPLACE INTO verification_bots (bot_id, label) VALUES (?, ?)", botID, label)
+	return err
+}
+
+func (s *Store) RemoveVerificationBot(botID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("DELETE FROM verification_bots WHERE bot_id = ?", botID)
+	return err
+}
+
+func (s *Store) ListVerificationBots() ([]VerificationBot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT bot_id, label, added_at FROM verification_bots ORDER BY added_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bots []VerificationBot
+	for rows.Next() {
+		var b VerificationBot
+		if err := rows.Scan(&b.BotID, &b.Label, &b.AddedAt); err != nil {
+			return nil, err
+		}
+		bots = append(bots, b)
+	}
+	return bots, rows.Err()
+}
+
+func (s *Store) GetVerificationBotIDs() map[int64]struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT bot_id FROM verification_bots")
 	if err != nil {
 		return nil
 	}
