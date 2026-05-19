@@ -144,7 +144,7 @@
                 class="text-xs px-2 py-1 rounded transition font-medium">NEW Users Only</button>
             </div>
             <div class="flex flex-wrap gap-1.5">
-              <template x-for="cat in availableCategories" :key="cat">
+              <template x-for="cat in (authenticated ? availableCategories.concat(adminCategories) : availableCategories)" :key="cat">
                 <button @click="toggleFilter(cat)"
                   :class="activeFilters.includes(cat) ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
                   class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
@@ -451,10 +451,11 @@
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
-          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND',
+          'TEXT_LINK', 'MENTION', 'BOT_COMMAND',
           'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
           'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS'
         ],
+        adminCategories: ['SYSTEM', 'CONFIG'],
         
         sseSource: null,
 
@@ -914,6 +915,9 @@
 
         get filteredLogs() {
           let result = [...this.logs];
+          if (!this.authenticated) {
+            result = result.filter(l => !this.adminCategories.includes(l.category));
+          }
           if (this.filterNewOnly) {
             result = result.filter(l => l.is_new);
           }
