@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -61,7 +62,14 @@ func main() {
 
 	jwt := auth.NewJWTManager()
 
-	h := handler.New(store, broker, jwt)
+	botEnabled := new(atomic.Bool)
+	if enabled, err := store.GetBotEnabled(); err == nil {
+		botEnabled.Store(enabled)
+	} else {
+		botEnabled.Store(true)
+	}
+
+	h := handler.New(store, broker, jwt, botEnabled)
 
 	app := fiber.New(fiber.Config{
 		AppName:           "SpamObserver",
@@ -105,7 +113,7 @@ func main() {
 		log.Fatalf("Failed to setup webhook: %v", err)
 	}
 
-	monitor := bot.New(broker, store.GetMonitoredIDs)
+	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load)
 
 	bh, err := telegohandler.NewBotHandler(telegoBot, updatesChan)
 	if err != nil {

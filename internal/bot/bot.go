@@ -12,16 +12,21 @@ import (
 type Monitor struct {
 	broker    *logstream.Broker
 	monitored func() map[int64]struct{}
+	enabled   func() bool
 }
 
-func New(broker *logstream.Broker, monitored func() map[int64]struct{}) *Monitor {
+func New(broker *logstream.Broker, monitored func() map[int64]struct{}, enabled func() bool) *Monitor {
 	return &Monitor{
 		broker:    broker,
 		monitored: monitored,
+		enabled:   enabled,
 	}
 }
 
 func (m *Monitor) ProcessUpdate(update telego.Update) {
+	if m.enabled != nil && !m.enabled() {
+		return
+	}
 	if update.Message != nil {
 		m.processMessage(update.Message)
 	}

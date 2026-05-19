@@ -60,7 +60,8 @@ func (s *Store) migrate() error {
 		CREATE TABLE IF NOT EXISTS admin_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL DEFAULT 'admin',
-			password_hash TEXT NOT NULL
+			password_hash TEXT NOT NULL,
+			bot_enabled INTEGER NOT NULL DEFAULT 1
 		);
 
 		CREATE TABLE IF NOT EXISTS monitored_groups (
@@ -68,7 +69,13 @@ func (s *Store) migrate() error {
 			added_at DATETIME NOT NULL DEFAULT (datetime('now'))
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_enabled INTEGER NOT NULL DEFAULT 1")
+
+	return nil
 }
 
 func (s *Store) InitAdmin(username, password string) error {
@@ -110,6 +117,14 @@ func (s *Store) GetAdmin() (*AdminSettings, error) {
 	return a, nil
 }
 
+func (s *Store) UpdateAdminUsername(username string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE admin_settings SET username = ? WHERE id = 1", username)
+	return err
+}
+
 func (s *Store) UpdateAdminPassword(password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -119,6 +134,30 @@ func (s *Store) UpdateAdminPassword(password string) error {
 		return fmt.Errorf("hash password: %w", err)
 	}
 	_, err = s.db.Exec("UPDATE admin_settings SET password_hash = ? WHERE id = 1", string(hash))
+	return err
+}
+
+func (s *Store) GetBotEnabled() (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var enabled int
+	err := s.db.QueryRow("SELECT bot_enabled FROM admin_settings WHERE id = 1").Scan(&enabled)
+	if err != nil {
+		return true, err
+	}
+	return enabled == 1, nil
+}
+
+func (s *Store) SetBotEnabled(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.db.Exec("UPDATE admin_settings SET bot_enabled = ? WHERE id = 1", v)
 	return err
 }
 

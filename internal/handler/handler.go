@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -16,16 +17,18 @@ import (
 )
 
 type Handler struct {
-	store  *db.Store
-	broker *logstream.Broker
-	jwt    *auth.JWTManager
+	store      *db.Store
+	broker     *logstream.Broker
+	jwt        *auth.JWTManager
+	botEnabled *atomic.Bool
 }
 
-func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager) *Handler {
+func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool) *Handler {
 	return &Handler{
-		store:  store,
-		broker: broker,
-		jwt:    jwt,
+		store:      store,
+		broker:     broker,
+		jwt:        jwt,
+		botEnabled: botEnabled,
 	}
 }
 
@@ -44,10 +47,15 @@ func (h *Handler) Register(app *fiber.App) {
 	api.Get("/logs/stream", h.handleSSEStream)
 	api.Get("/logs/recent", h.handleRecentLogs)
 
+	api.Get("/bot/status", h.handleBotStatus)
+
 	configGroup := api.Group("/config", auth.AuthMiddleware(h.jwt, nil))
 	configGroup.Get("/groups", h.handleListGroups)
 	configGroup.Post("/groups", h.handleAddGroup)
 	configGroup.Delete("/groups/:chatId", h.handleRemoveGroup)
+	configGroup.Post("/bot/toggle", h.handleBotToggle)
+	configGroup.Post("/auth/change-password", h.handleChangePassword)
+	configGroup.Post("/auth/change-username", h.handleChangeUsername)
 }
 
 func (h *Handler) handleLogin(c fiber.Ctx) error {
@@ -189,6 +197,85 @@ func (h *Handler) handleRecentLogs(c fiber.Ctx) error {
 		recent = []logstream.Entry{}
 	}
 	return c.JSON(recent)
+}
+
+func (h *Handler) handleBotStatus(c fiber.Ctx) error {
+	return c.JSON(fiber.Map{"enabled": h.botEnabled.Load()})
+}
+
+func (h *Handler) handleBotToggle(c fiber.Ctx) error {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+
+	if err := h.store.SetBotEnabled(body.Enabled); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update bot status"})
+	}
+	h.botEnabled.Store(body.Enabled)
+
+	state := "disabled"
+	if body.Enabled {
+		state = "enabled"
+	}
+	h.broker.Publish(logstream.Info("SYSTEM", "Bot monitoring %s", state))
+
+	return c.JSON(fiber.Map{"ok": true, "enabled": body.Enabled})
+}
+
+func (h *Handler) handleChangePassword(c fiber.Ctx) error {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if body.CurrentPassword == "" || body.NewPassword == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "both current and new password are required"})
+	}
+	if len(body.NewPassword) < 4 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "new password must be at least 4 characters"})
+	}
+
+	ok, err := h.store.VerifyAdminPassword(body.CurrentPassword)
+	if err != nil || !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "current password is incorrect"})
+	}
+
+	if err := h.store.UpdateAdminPassword(body.NewPassword); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update password"})
+	}
+
+	h.broker.Publish(logstream.Info("CONFIG", "Admin password changed"))
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) handleChangeUsername(c fiber.Ctx) error {
+	var body struct {
+		NewUsername string `json:"new_username"`
+		Password   string `json:"password"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if body.NewUsername == "" || body.Password == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "both new username and password are required"})
+	}
+
+	ok, err := h.store.VerifyAdminPassword(body.Password)
+	if err != nil || !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "password is incorrect"})
+	}
+
+	if err := h.store.UpdateAdminUsername(body.NewUsername); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update username"})
+	}
+
+	h.broker.Publish(logstream.Info("CONFIG", "Admin username changed to %s", body.NewUsername))
+	return c.JSON(fiber.Map{"ok": true, "username": body.NewUsername})
 }
 
 func InitAdmin(store *db.Store) error {
