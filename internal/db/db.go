@@ -74,6 +74,7 @@ func (s *Store) migrate() error {
 	}
 
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_enabled INTEGER NOT NULL DEFAULT 1")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN bot_token TEXT NOT NULL DEFAULT ''")
 
 	return nil
 }
@@ -159,6 +160,35 @@ func (s *Store) SetBotEnabled(enabled bool) error {
 	}
 	_, err := s.db.Exec("UPDATE admin_settings SET bot_enabled = ? WHERE id = 1", v)
 	return err
+}
+
+func (s *Store) GetBotToken() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var token string
+	err := s.db.QueryRow("SELECT bot_token FROM admin_settings WHERE id = 1").Scan(&token)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *Store) SetBotToken(token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE admin_settings SET bot_token = ? WHERE id = 1", token)
+	return err
+}
+
+func (s *Store) HasBotToken() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var token string
+	_ = s.db.QueryRow("SELECT bot_token FROM admin_settings WHERE id = 1").Scan(&token)
+	return token != ""
 }
 
 func (s *Store) VerifyAdminPassword(password string) (bool, error) {

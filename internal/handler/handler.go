@@ -21,14 +21,16 @@ type Handler struct {
 	broker     *logstream.Broker
 	jwt        *auth.JWTManager
 	botEnabled *atomic.Bool
+	restartBot func(token string) error
 }
 
-func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool) *Handler {
+func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool, restartBot func(token string) error) *Handler {
 	return &Handler{
 		store:      store,
 		broker:     broker,
 		jwt:        jwt,
 		botEnabled: botEnabled,
+		restartBot: restartBot,
 	}
 }
 
@@ -48,12 +50,15 @@ func (h *Handler) Register(app *fiber.App) {
 	api.Get("/logs/recent", h.handleRecentLogs)
 
 	api.Get("/bot/status", h.handleBotStatus)
+	api.Get("/bot/info", h.handleBotInfo)
 
 	configGroup := api.Group("/config", auth.AuthMiddleware(h.jwt, nil))
 	configGroup.Get("/groups", h.handleListGroups)
 	configGroup.Post("/groups", h.handleAddGroup)
 	configGroup.Delete("/groups/:chatId", h.handleRemoveGroup)
 	configGroup.Post("/bot/toggle", h.handleBotToggle)
+	configGroup.Get("/bot/token", h.handleGetBotToken)
+	configGroup.Post("/bot/token", h.handleSetBotToken)
 	configGroup.Post("/auth/change-password", h.handleChangePassword)
 	configGroup.Post("/auth/change-username", h.handleChangeUsername)
 }
@@ -223,6 +228,54 @@ func (h *Handler) handleBotToggle(c fiber.Ctx) error {
 	h.broker.Publish(logstream.Info("SYSTEM", "Bot monitoring %s", state))
 
 	return c.JSON(fiber.Map{"ok": true, "enabled": body.Enabled})
+}
+
+func (h *Handler) handleBotInfo(c fiber.Ctx) error {
+	hasToken := h.store.HasBotToken()
+	return c.JSON(fiber.Map{
+		"has_token": hasToken,
+		"enabled":   h.botEnabled.Load(),
+	})
+}
+
+func (h *Handler) handleGetBotToken(c fiber.Ctx) error {
+	token, err := h.store.GetBotToken()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get bot token"})
+	}
+	masked := ""
+	if len(token) > 8 {
+		masked = token[:4] + "..." + token[len(token)-4:]
+	} else if token != "" {
+		masked = "***"
+	}
+	return c.JSON(fiber.Map{"has_token": token != "", "masked_token": masked})
+}
+
+func (h *Handler) handleSetBotToken(c fiber.Ctx) error {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if body.Token == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "token is required"})
+	}
+
+	if err := h.store.SetBotToken(body.Token); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save bot token"})
+	}
+
+	if h.restartBot != nil {
+		if err := h.restartBot(body.Token); err != nil {
+			h.broker.Publish(logstream.Error("SYSTEM", "Failed to restart bot: %v", err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "token saved but bot restart failed: " + err.Error()})
+		}
+	}
+
+	h.broker.Publish(logstream.Info("CONFIG", "Bot token updated, bot restarted"))
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 func (h *Handler) handleChangePassword(c fiber.Ctx) error {

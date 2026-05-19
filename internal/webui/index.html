@@ -31,14 +31,15 @@
 </head>
 <body class="bg-dark-900 text-gray-200 min-h-screen" x-data="app()" x-init="init()" x-cloak>
 
-  <!-- Header (always visible) -->
+  <!-- Header -->
   <div class="max-w-7xl mx-auto px-4 pt-6">
     <header class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-3">
         <div class="w-3 h-3 rounded-full bg-green-500 pulse-dot"></div>
         <h1 class="text-xl font-bold text-white">SpamObserver</h1>
         <span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">PASSIVE MONITOR</span>
-        <span x-show="!botEnabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded font-medium">MONITORING PAUSED</span>
+        <span x-show="!botReady" class="text-xs bg-yellow-900 text-yellow-300 px-2 py-0.5 rounded font-medium">NO BOT TOKEN</span>
+        <span x-show="botReady && !botEnabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded font-medium">MONITORING PAUSED</span>
       </div>
       <div class="flex items-center gap-3">
         <template x-if="!authenticated">
@@ -47,7 +48,7 @@
         <template x-if="authenticated">
           <div class="flex items-center gap-3">
             <span class="text-sm text-gray-400" x-text="currentUser"></span>
-            <button @click="showSettings = true" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
+            <button @click="showSettings = true; loadBotTokenInfo()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
               </svg>
@@ -59,7 +60,7 @@
     </header>
   </div>
 
-  <!-- Main Content (always visible) -->
+  <!-- Main Content -->
   <div class="max-w-7xl mx-auto px-4 pb-6">
 
     <!-- Stats Row -->
@@ -78,8 +79,8 @@
       </div>
       <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
         <div class="text-xs text-gray-500 uppercase tracking-wider">Bot Status</div>
-        <div class="text-2xl font-bold mt-1" :class="botEnabled ? 'text-green-400' : 'text-red-400'" 
-          x-text="botEnabled ? 'ACTIVE' : 'PAUSED'">ACTIVE</div>
+        <div class="text-2xl font-bold mt-1" :class="botReady && botEnabled ? 'text-green-400' : (botReady ? 'text-red-400' : 'text-yellow-400')" 
+          x-text="!botReady ? 'NO TOKEN' : (botEnabled ? 'ACTIVE' : 'PAUSED')">NO TOKEN</div>
       </div>
     </div>
 
@@ -240,6 +241,28 @@
       </div>
 
       <div class="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+        <!-- Bot Token -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Bot Token</h3>
+          <div class="space-y-3">
+            <div x-show="botTokenInfo.has_token" class="text-xs text-green-400 bg-green-900/20 rounded px-3 py-2">
+              Token configured (<span x-text="botTokenInfo.masked_token"></span>)
+            </div>
+            <div x-show="!botTokenInfo.has_token" class="text-xs text-yellow-400 bg-yellow-900/20 rounded px-3 py-2">
+              No bot token configured. Paste your Telegram bot token below.
+            </div>
+            <form @submit.prevent="saveBotToken()" class="flex gap-2">
+              <input type="text" x-model="botTokenInput" placeholder="123456:ABC-DEF..."
+                class="flex-1 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition font-mono">
+              <button type="submit"
+                class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition"
+                :disabled="settingsLoading">
+                Save
+              </button>
+            </form>
+          </div>
+        </div>
+
         <!-- Bot Toggle -->
         <div>
           <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Bot Monitoring</h3>
@@ -308,6 +331,8 @@
   </div>
 
   <script>
+    const TOKEN_KEY = 'spamo_token';
+
     function app() {
       return {
         authenticated: false,
@@ -328,6 +353,7 @@
         searchQuery: '',
         activeFilters: [],
         botEnabled: true,
+        botReady: false,
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'AD_LINK', 'AD_KEYWORD', 'BUTTON', 'URL_ENTITY',
@@ -338,34 +364,52 @@
 
         passwordForm: { current_password: '', new_password: '', confirm_password: '' },
         usernameForm: { new_username: '' },
+        botTokenInput: '',
+        botTokenInfo: { has_token: false, masked_token: '' },
         settingsError: '',
         settingsSuccess: '',
         settingsLoading: false,
 
         init() {
-          this.checkAuth();
           this.connectSSE();
-          this.fetchBotStatus();
+          this.fetchBotInfo();
+          this.restoreSession();
         },
 
-        async checkAuth() {
+        authHeaders() {
+          const token = localStorage.getItem(TOKEN_KEY);
+          const h = { 'Content-Type': 'application/json' };
+          if (token) h['Authorization'] = 'Bearer ' + token;
+          return h;
+        },
+
+        async restoreSession() {
+          const token = localStorage.getItem(TOKEN_KEY);
+          if (!token) return;
           try {
-            const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+            const r = await fetch('/api/auth/me', {
+              headers: { 'Authorization': 'Bearer ' + token }
+            });
             if (r.ok) {
               const d = await r.json();
               this.authenticated = true;
               this.currentUser = d.username;
               this.loadGroups();
+            } else {
+              localStorage.removeItem(TOKEN_KEY);
             }
-          } catch (e) {}
+          } catch (e) {
+            localStorage.removeItem(TOKEN_KEY);
+          }
         },
 
-        async fetchBotStatus() {
+        async fetchBotInfo() {
           try {
-            const r = await fetch('/api/bot/status', { credentials: 'same-origin' });
+            const r = await fetch('/api/bot/info');
             if (r.ok) {
               const d = await r.json();
               this.botEnabled = d.enabled;
+              this.botReady = d.has_token;
             }
           } catch (e) {}
         },
@@ -376,12 +420,12 @@
           try {
             const r = await fetch('/api/auth/login', {
               method: 'POST',
-              credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(this.loginForm)
             });
             const d = await r.json();
             if (r.ok) {
+              localStorage.setItem(TOKEN_KEY, d.token);
               this.authenticated = true;
               this.currentUser = d.username;
               this.loginForm = { username: '', password: '' };
@@ -398,7 +442,8 @@
         },
 
         async logout() {
-          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+          localStorage.removeItem(TOKEN_KEY);
+          await fetch('/api/auth/logout', { method: 'POST' });
           this.authenticated = false;
           this.currentUser = '';
           this.groups = [];
@@ -406,7 +451,7 @@
 
         async loadGroups() {
           try {
-            const r = await fetch('/api/config/groups', { credentials: 'same-origin' });
+            const r = await fetch('/api/config/groups', { headers: this.authHeaders() });
             if (r.ok) {
               this.groups = await r.json() || [];
             }
@@ -419,8 +464,7 @@
           try {
             const r = await fetch('/api/config/groups', {
               method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.authHeaders(),
               body: JSON.stringify({ chat_id: id })
             });
             if (r.ok) {
@@ -433,7 +477,10 @@
 
         async removeGroup(chatId) {
           try {
-            await fetch('/api/config/groups/' + chatId, { method: 'DELETE', credentials: 'same-origin' });
+            await fetch('/api/config/groups/' + chatId, {
+              method: 'DELETE',
+              headers: this.authHeaders()
+            });
             this.loadGroups();
           } catch (e) {}
         },
@@ -443,8 +490,7 @@
           try {
             const r = await fetch('/api/config/bot/toggle', {
               method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.authHeaders(),
               body: JSON.stringify({ enabled: newState })
             });
             if (r.ok) {
@@ -452,6 +498,45 @@
               this.botEnabled = d.enabled;
             }
           } catch (e) {}
+        },
+
+        async loadBotTokenInfo() {
+          try {
+            const r = await fetch('/api/config/bot/token', { headers: this.authHeaders() });
+            if (r.ok) {
+              this.botTokenInfo = await r.json();
+            }
+          } catch (e) {}
+        },
+
+        async saveBotToken() {
+          this.settingsError = '';
+          this.settingsSuccess = '';
+          if (!this.botTokenInput.trim()) {
+            this.settingsError = 'Bot token is required';
+            return;
+          }
+          this.settingsLoading = true;
+          try {
+            const r = await fetch('/api/config/bot/token', {
+              method: 'POST',
+              headers: this.authHeaders(),
+              body: JSON.stringify({ token: this.botTokenInput.trim() })
+            });
+            const d = await r.json();
+            if (r.ok) {
+              this.settingsSuccess = 'Bot token saved and bot restarted';
+              this.botTokenInput = '';
+              this.botReady = true;
+              this.loadBotTokenInfo();
+              this.fetchBotInfo();
+            } else {
+              this.settingsError = d.error || 'Failed to save bot token';
+            }
+          } catch (e) {
+            this.settingsError = 'Network error';
+          }
+          this.settingsLoading = false;
         },
 
         async changePassword() {
@@ -473,8 +558,7 @@
           try {
             const r = await fetch('/api/config/auth/change-password', {
               method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.authHeaders(),
               body: JSON.stringify({
                 current_password: this.passwordForm.current_password,
                 new_password: this.passwordForm.new_password
@@ -504,8 +588,7 @@
           try {
             const r = await fetch('/api/config/auth/change-username', {
               method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.authHeaders(),
               body: JSON.stringify({ new_username: this.usernameForm.new_username })
             });
             const d = await r.json();
@@ -527,6 +610,7 @@
           this.settingsSuccess = '';
           this.passwordForm = { current_password: '', new_password: '', confirm_password: '' };
           this.usernameForm = { new_username: '' };
+          this.botTokenInput = '';
         },
 
         connectSSE() {
