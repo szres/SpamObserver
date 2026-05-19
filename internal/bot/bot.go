@@ -112,14 +112,14 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 				UserID:    member.ID,
 				Username:  member.Username,
 				IsNew:     !member.IsBot,
-				Message: fmt.Sprintf("New member joined: %s (ID: %d, Username: @%s, Bio: %s, Bot: %v)",
-					displayName, member.ID, member.Username, bioDisplay, member.IsBot),
+				Message: fmt.Sprintf("New member joined: %s (@%s, Bio: %s, Bot: %v)",
+					userRef(member.ID, displayName), member.Username, bioDisplay, member.IsBot),
 			}
 			if member.IsBot {
 				entry.Level = "WARN"
 				entry.Category = "BOT_JOIN"
 				entry.IsNew = false
-				entry.Message = fmt.Sprintf("Bot added to group: @%s (ID: %d)", member.Username, member.ID)
+				entry.Message = fmt.Sprintf("Bot added to group: %s", userRef(member.ID, "@"+member.Username))
 			}
 			m.broker.Publish(entry)
 		}
@@ -134,34 +134,74 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 			ChatID:    chatID,
 			UserID:    member.ID,
 			Username:  member.Username,
-			Message:   fmt.Sprintf("Member left: %s (ID: %d)", memberDisplayName(*member), member.ID),
+			Message:   fmt.Sprintf("Member left: %s", userRef(member.ID, memberDisplayName(*member))),
 		})
 	}
 
-	if msg.From != nil && msg.From.IsBot {
-		isVerify := m.isVerifyBot(msg.From.ID)
-		category := "BOT_MSG"
-		if isVerify {
-			category = "VERIFY_BOT_MSG"
-		}
-		m.broker.Publish(logstream.Entry{
-			Timestamp: time.Unix(int64(msg.Date), 0),
-			Level:     "INFO",
-			Category:  category,
-			ChatID:    chatID,
-			UserID:    msg.From.ID,
-			Username:  msg.From.Username,
-			Message:   fmt.Sprintf("Bot message from @%s: %s", msg.From.Username, truncate(extractText(msg), 200)),
-			Raw:       extractText(msg),
-		})
+	if msg.From == nil {
+		return
 	}
 
-	if msg.Entities != nil || msg.CaptionEntities != nil {
-		m.analyzeEntities(msg)
+	entityTags := collectEntityTags(msg)
+	quoteInfo := extractQuoteInfo(msg)
+
+	isBot := msg.From.IsBot
+	isVerifyBot := isBot && m.isVerifyBot(msg.From.ID)
+	isNew := !isBot && m.isNewUser(msg.From.ID)
+	hasEntities := len(entityTags) > 0
+	hasQuote := quoteInfo != ""
+
+	if !isBot && !isNew && !hasEntities && !hasQuote {
+		return
 	}
 
-	m.logQuote(msg, chatID)
-	m.logNewUserMessage(msg, chatID)
+	var category, level string
+	switch {
+	case isVerifyBot:
+		category, level = "VERIFY_BOT_MSG", "INFO"
+	case isBot:
+		category, level = "BOT_MSG", "INFO"
+	case isNew:
+		category, level = "NEW_MSG", "INFO"
+	case hasEntities:
+		category, level = entityTags[0], "INFO"
+	default:
+		category, level = "QUOTE", "INFO"
+	}
+
+	content := extractText(msg)
+	if content == "" {
+		content = describeMedia(msg)
+	}
+
+	var parts []string
+	for _, tag := range entityTags {
+		parts = append(parts, "["+tag+"]")
+	}
+	parts = append(parts, userRef(msg.From.ID, memberDisplayName(*msg.From))+":")
+	parts = append(parts, truncate(content, 300))
+	if hasQuote {
+		parts = append(parts, quoteInfo)
+	}
+
+	mutualCount := 0
+	if isNew {
+		mutualCount = m.countMutualGroups(msg.From.ID)
+		parts = append(parts, fmt.Sprintf("(MG:%d)", mutualCount))
+	}
+
+	m.broker.Publish(logstream.Entry{
+		Timestamp:    time.Unix(int64(msg.Date), 0),
+		Level:        level,
+		Category:     category,
+		ChatID:       chatID,
+		UserID:       msg.From.ID,
+		Username:     msg.From.Username,
+		IsNew:        isNew,
+		MutualGroups: mutualCount,
+		Message:      strings.Join(parts, " "),
+		Raw:          content,
+	})
 }
 
 func (m *Monitor) fetchUserBio(userID int64) string {
@@ -180,112 +220,78 @@ func (m *Monitor) fetchUserBio(userID int64) string {
 	return info.Bio
 }
 
-func (m *Monitor) logQuote(msg *telego.Message, chatID int64) {
+func collectEntityTags(msg *telego.Message) []string {
+	entities := msg.Entities
+	if len(entities) == 0 {
+		entities = msg.CaptionEntities
+	}
+	if len(entities) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var tags []string
+	for _, e := range entities {
+		var tag string
+		switch e.Type {
+		case telego.EntityTypeURL:
+			tag = "URL_ENTITY"
+		case telego.EntityTypeTextLink:
+			tag = "TEXT_LINK"
+		case telego.EntityTypeMention:
+			tag = "MENTION"
+		case telego.EntityTypeHashtag:
+			tag = "HASHTAG"
+		case telego.EntityTypeBotCommand:
+			tag = "BOT_COMMAND"
+		default:
+			continue
+		}
+		if !seen[tag] {
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+func extractQuoteInfo(msg *telego.Message) string {
 	hasQuote := msg.Quote != nil && msg.Quote.Text != ""
 	hasReply := msg.ReplyToMessage != nil
 
 	if !hasQuote && !hasReply {
-		return
+		return ""
 	}
 
-	userID := int64(0)
-	username := ""
-	if msg.From != nil {
-		userID = msg.From.ID
-		username = msg.From.Username
-	}
-
-	parts := []string{}
-	rawParts := []string{}
+	var parts []string
 
 	if hasQuote {
-		quoteText := msg.Quote.Text
-		parts = append(parts, fmt.Sprintf("[Quote: %s]", truncate(quoteText, 200)))
-		rawParts = append(rawParts, "QUOTE: "+quoteText)
+		parts = append(parts, fmt.Sprintf("[Quote: %s]", truncate(msg.Quote.Text, 100)))
 	}
 
 	if hasReply {
 		reply := msg.ReplyToMessage
-		replyText := extractText(reply)
 		replyFrom := "unknown"
 		if reply.From != nil {
-			replyFrom = fmt.Sprintf("%s (ID: %d)", memberDisplayName(*reply.From), reply.From.ID)
+			replyFrom = userRef(reply.From.ID, memberDisplayName(*reply.From))
 		}
+		replyText := extractText(reply)
 		if replyText != "" {
-			parts = append(parts, fmt.Sprintf("[Reply to %s: %s]", replyFrom, truncate(replyText, 200)))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): %s", replyFrom, replyText))
+			parts = append(parts, fmt.Sprintf("[Reply to %s: %s]", replyFrom, truncate(replyText, 100)))
 		} else if reply.Photo != nil {
 			parts = append(parts, fmt.Sprintf("[Reply to %s: <photo>]", replyFrom))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): <photo>", replyFrom))
 		} else if reply.Document != nil {
 			parts = append(parts, fmt.Sprintf("[Reply to %s: <document>]", replyFrom))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): <document>", replyFrom))
 		} else if reply.Video != nil {
 			parts = append(parts, fmt.Sprintf("[Reply to %s: <video>]", replyFrom))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): <video>", replyFrom))
 		} else if reply.Sticker != nil {
 			parts = append(parts, fmt.Sprintf("[Reply to %s: <sticker>]", replyFrom))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): <sticker>", replyFrom))
 		} else {
 			parts = append(parts, fmt.Sprintf("[Reply to %s: <non-text>]", replyFrom))
-			rawParts = append(rawParts, fmt.Sprintf("REPLY(%s): <non-text>", replyFrom))
-		}
-
-		if reply.Entities != nil {
-			for _, e := range reply.Entities {
-				if e.Type == telego.EntityTypeTextLink && e.URL != "" {
-					rawParts = append(rawParts, fmt.Sprintf("REPLY_LINK: %s", e.URL))
-				}
-			}
 		}
 	}
 
-	currentText := extractText(msg)
-	if currentText != "" {
-		parts = append([]string{truncate(currentText, 100)}, parts...)
-	}
-
-	m.broker.Publish(logstream.Entry{
-		Timestamp: time.Unix(int64(msg.Date), 0),
-		Level:     "INFO",
-		Category:  "QUOTE",
-		ChatID:    chatID,
-		UserID:    userID,
-		Username:  username,
-		IsNew:     m.isNewUser(userID),
-		Message:   strings.Join(parts, " "),
-		Raw:       strings.Join(rawParts, "\n"),
-	})
-}
-
-func (m *Monitor) logNewUserMessage(msg *telego.Message, chatID int64) {
-	if msg.From == nil || msg.From.IsBot {
-		return
-	}
-	if !m.isNewUser(msg.From.ID) {
-		return
-	}
-
-	mutualCount := m.countMutualGroups(msg.From.ID)
-
-	content := extractText(msg)
-	if content == "" {
-		content = describeMedia(msg)
-	}
-
-	m.broker.Publish(logstream.Entry{
-		Timestamp:    time.Unix(int64(msg.Date), 0),
-		Level:        "INFO",
-		Category:     "NEW_MSG",
-		ChatID:       chatID,
-		UserID:       msg.From.ID,
-		Username:     msg.From.Username,
-		IsNew:        true,
-		MutualGroups: mutualCount,
-		Message: fmt.Sprintf("NEW user %s (mutual groups: %d): %s",
-			memberDisplayName(*msg.From), mutualCount, truncate(content, 300)),
-		Raw: content,
-	})
+	return strings.Join(parts, " ")
 }
 
 func (m *Monitor) countMutualGroups(userID int64) int {
@@ -393,7 +399,7 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 	performedBy := "unknown"
 	actorIsVerifyBot := false
 	if update.From.ID != 0 {
-		performedBy = fmt.Sprintf("%s (ID: %d)", memberDisplayName(update.From), update.From.ID)
+		performedBy = userRef(update.From.ID, memberDisplayName(update.From))
 		actorIsVerifyBot = m.isVerifyBot(update.From.ID)
 	}
 
@@ -420,7 +426,7 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 		Username:  targetUser.Username,
 		IsNew:     targetIsNew,
 		Message: fmt.Sprintf("%s was %s by %s",
-			memberDisplayName(targetUser), action, performedBy),
+			userRef(targetUser.ID, memberDisplayName(targetUser)), action, performedBy),
 	})
 }
 
@@ -453,68 +459,9 @@ func (m *Monitor) processCallbackQuery(cq *telego.CallbackQuery) {
 		Username:  from.Username,
 		IsNew:     isNew,
 		Message: fmt.Sprintf("Button click by %s: %q",
-			memberDisplayName(from), cq.Data),
+			userRef(from.ID, memberDisplayName(from)), cq.Data),
 		Raw: cq.Data,
 	})
-}
-
-func (m *Monitor) analyzeEntities(msg *telego.Message) {
-	entities := msg.Entities
-	if len(entities) == 0 {
-		entities = msg.CaptionEntities
-	}
-	if len(entities) == 0 {
-		return
-	}
-
-	for _, entity := range entities {
-		var category string
-		switch entity.Type {
-		case telego.EntityTypeURL:
-			category = "URL_ENTITY"
-		case telego.EntityTypeTextLink:
-			category = "TEXT_LINK"
-		case telego.EntityTypeMention:
-			category = "MENTION"
-		case telego.EntityTypeHashtag:
-			category = "HASHTAG"
-		case telego.EntityTypeBotCommand:
-			category = "BOT_COMMAND"
-		default:
-			continue
-		}
-
-		userID := int64(0)
-		username := ""
-		if msg.From != nil {
-			userID = msg.From.ID
-			username = msg.From.Username
-		}
-
-		text := msg.Text
-		if text == "" {
-			text = msg.Caption
-		}
-		extracted := extractEntityText(text, entity)
-
-		extra := ""
-		if entity.Type == telego.EntityTypeTextLink && entity.URL != "" {
-			extra = fmt.Sprintf(" -> %s", entity.URL)
-		}
-
-		m.broker.Publish(logstream.Entry{
-			Timestamp: time.Unix(int64(msg.Date), 0),
-			Level:     "INFO",
-			Category:  category,
-			ChatID:    msg.Chat.ID,
-			UserID:    userID,
-			Username:  username,
-			IsNew:     m.isNewUser(userID),
-			Message: fmt.Sprintf("Entity [%s]: %s%s",
-				category, truncate(extracted, 100), extra),
-			Raw: extracted,
-		})
-	}
 }
 
 func extractText(msg *telego.Message) string {
@@ -525,20 +472,6 @@ func extractText(msg *telego.Message) string {
 		return msg.Caption
 	}
 	return ""
-}
-
-func extractEntityText(text string, entity telego.MessageEntity) string {
-	runes := []rune(text)
-	offset := entity.Offset
-	length := entity.Length
-	if offset >= len(runes) {
-		return ""
-	}
-	end := offset + length
-	if end > len(runes) {
-		end = len(runes)
-	}
-	return string(runes[offset:end])
 }
 
 func memberDisplayName(u telego.User) string {
@@ -552,6 +485,10 @@ func memberDisplayName(u telego.User) string {
 		return "@" + u.Username
 	}
 	return fmt.Sprintf("User#%d", u.ID)
+}
+
+func userRef(id int64, name string) string {
+	return fmt.Sprintf("[U:%d:%s]", id, name)
 }
 
 func truncate(s string, maxLen int) string {

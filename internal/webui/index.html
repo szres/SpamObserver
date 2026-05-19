@@ -183,7 +183,8 @@
                 :class="{
                   'text-gray-400': log.level === 'INFO',
                   'text-yellow-400': log.level === 'WARN',
-                  'text-red-400': log.level === 'ERROR'
+                  'text-red-400': log.level === 'ERROR',
+                  'mt-2': log._sep
                 }">
                 <span class="text-gray-600 shrink-0 w-20" x-text="formatTime(log.timestamp)"></span>
                 <span class="shrink-0 w-12 text-right"
@@ -192,8 +193,8 @@
                     'text-yellow-400': log.level === 'WARN',
                     'text-red-400': log.level === 'ERROR'
                   }" x-text="'[' + log.level + ']'"></span>
-                <span class="shrink-0 w-24 text-cyan-400" x-text="'[' + log.category + ']'"></span>
-                <span class="text-gray-200 break-all" x-text="log.message"></span>
+                <span class="shrink-0 w-28 text-cyan-400" x-text="'[' + log.category + ']'"></span>
+                <span class="text-gray-200 break-all" x-html="formatMessage(log.message)"></span>
                 <span x-show="log.is_new" class="shrink-0 text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-medium ml-1">NEW</span>
                 <span x-show="log.mutual_groups > 0" class="shrink-0 text-xs bg-orange-600 text-white px-1.5 py-0.5 rounded font-medium ml-1" x-text="'MG:' + log.mutual_groups"></span>
                 <span x-show="log.chat_id" class="shrink-0 text-gray-600 ml-auto" x-text="'chat:' + log.chat_id"></span>
@@ -778,7 +779,7 @@
         },
 
         get filteredLogs() {
-          let result = this.logs;
+          let result = [...this.logs];
           if (this.filterNewOnly) {
             result = result.filter(l => l.is_new);
           }
@@ -793,13 +794,30 @@
               (l.username && l.username.toLowerCase().includes(q))
             );
           }
-          return result.slice(-200);
+          result.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          const sliced = result.slice(-200);
+          for (let i = 0; i < sliced.length; i++) {
+            sliced[i]._sep = i > 0 && sliced[i].timestamp !== sliced[i-1].timestamp;
+          }
+          return sliced;
         },
 
         formatTime(ts) {
           if (!ts) return '';
           const d = new Date(ts);
           return d.toLocaleTimeString('en-GB', { hour12: false });
+        },
+
+        formatMessage(msg) {
+          if (!msg) return '';
+          let s = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          s = s.replace(/\[U:(\d+):([^\]]+)\]|@([\w]{3,32})/g, function(_, id, name, atUser) {
+            if (id) {
+              return '<span class="text-sky-400 font-semibold cursor-help underline decoration-dotted underline-offset-2" title="ID: ' + id + '">' + name + '</span>';
+            }
+            return '<span class="text-sky-400 font-semibold">@' + atUser + '</span>';
+          });
+          return s;
         }
       };
     }
