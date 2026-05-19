@@ -56,6 +56,7 @@ func (h *Handler) Register(app *fiber.App) {
 	api.Get("/bot/status", h.handleBotStatus)
 	api.Get("/bot/info", h.handleBotInfo)
 	api.Get("/bot/new-users-count", h.handleNewUsersCount)
+	api.Get("/bot/banned-count", h.handleBannedCount)
 
 	configGroup := api.Group("/config", auth.AuthMiddleware(h.jwt, nil))
 	configGroup.Get("/groups", h.handleListGroups)
@@ -253,6 +254,14 @@ func (h *Handler) handleBotInfo(c fiber.Ctx) error {
 func (h *Handler) handleNewUsersCount(c fiber.Ctx) error {
 	users := h.tracker.GetAllNew()
 	return c.JSON(fiber.Map{"count": len(users)})
+}
+
+func (h *Handler) handleBannedCount(c fiber.Ctx) error {
+	count, err := h.store.GetBannedCount24h()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get banned count"})
+	}
+	return c.JSON(fiber.Map{"count": count})
 }
 
 func (h *Handler) handleGetBotToken(c fiber.Ctx) error {

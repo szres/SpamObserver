@@ -558,3 +558,18 @@ func (s *Store) PurgeOldLogs(olderThan time.Duration) error {
 	_, err := s.db.Exec("DELETE FROM event_logs WHERE timestamp < ?", cutoff)
 	return err
 }
+
+func (s *Store) GetBannedCount24h() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cutoff := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(DISTINCT user_id) FROM event_logs
+		 WHERE category IN ('BAN', 'VERIFY_BAN') AND timestamp >= ?`, cutoff).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}

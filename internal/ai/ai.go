@@ -115,28 +115,39 @@ func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*A
 	}
 
 	url := BuildAPIURL(cfg.BaseURL)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-
 	client := noRedirectClient(30 * time.Second)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+	var respBody []byte
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(1 * time.Second)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("http request: %w", err)
+		}
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries-1 {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
+		}
+		break
 	}
 
 	var chatResp chatResponse
@@ -183,25 +194,35 @@ func TestConnection(ctx context.Context, cfg Config) error {
 	}
 
 	url := BuildAPIURL(cfg.BaseURL)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-
 	client := noRedirectClient(15 * time.Second)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request to %s failed: %w", url, err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(1 * time.Second)
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return fmt.Errorf("request to %s failed: %w", url, err)
+		}
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
-	}
+		resp.Body.Close()
 
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries-1 {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
+		}
+		return nil
+	}
 	return nil
 }
