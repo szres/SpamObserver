@@ -29,6 +29,7 @@ If you add a feature that would require sending a message to Telegram, **do not 
 main.go
   ├── Fiber HTTP server (single port)
   ├── Telego webhook registration (UpdatesViaWebhook → Fiber route)
+  ├── startBot closure (mutex-protected bot lifecycle, reusable for restarts)
   ├── BotHandler (receives updates from channel, dispatches to Monitor)
   └── Signal handling (graceful shutdown)
 
@@ -43,6 +44,21 @@ internal/
       └── index.html    — Single-page Alpine.js + Tailwind dark UI
 ```
 
+### startBot lifecycle
+
+`startBot` in `main.go` is a mutex-protected (`botMu`) closure that handles the full bot lifecycle. It is called both at startup and when the admin sets a new bot token via the UI. Each invocation: stops existing bot handler → creates new `telego.Bot` → creates `BotHandler` → registers dispatch → starts handler goroutine → sets webhook (if `PUBLIC_URL` is set). It is safe to call multiple times; it stops the previous bot before starting a new one.
+
+### Bot token precedence
+
+On startup, tokens are resolved in this order:
+1. DB token (`store.GetBotToken()`) — preferred
+2. `BOT_TOKEN` env var — fallback
+3. No token — logs a warning, bot does not start
+
+Setting a token via the Settings UI (`POST /api/config/bot/token`) saves to DB and triggers `restartBot(token)`, so the token persists across restarts.
+
+The `bot_enabled` flag is loaded from DB at startup into an `atomic.Bool`. If the DB read fails, it defaults to `true`. `Monitor.ProcessUpdate` checks this at the top and short-circuits if disabled.
+
 ### Data flow
 
 ```
@@ -54,6 +70,52 @@ Telegram → Webhook POST → Fiber route → telego decode → updatesChan
 ### Group monitoring is hot-reloaded
 
 `Monitor.isMonitored()` calls `store.GetMonitoredIDs()` on every update — it queries SQLite each time. Adding/removing a group via the API takes effect immediately without restart.
+
+## API Endpoints
+
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/` | GET | — | Serve SPA (embedded HTML) |
+| `/api/auth/login` | POST | — | Authenticate, set cookie |
+| `/api/auth/logout` | POST | — | Clear session cookie |
+| `/api/auth/me` | GET | — | Check current session |
+| `/api/logs/stream` | GET | — | SSE event stream |
+| `/api/logs/recent` | GET | — | JSON array of recent entries |
+| `/api/bot/status` | GET | — | `{enabled: bool}` |
+| `/api/bot/info` | GET | — | `{has_token: bool, enabled: bool}` |
+| `/api/config/groups` | GET | Cookie | List monitored groups |
+| `/api/config/groups` | POST | Cookie | Add group `{chat_id}` |
+| `/api/config/groups/:chatId` | DELETE | Cookie | Remove group |
+| `/api/config/bot/toggle` | POST | Cookie | Enable/disable monitoring |
+| `/api/config/bot/token` | GET | Cookie | Masked bot token info |
+| `/api/config/bot/token` | POST | Cookie | Set bot token + restart bot |
+| `/api/config/auth/change-password` | POST | Cookie | Change admin password |
+| `/api/config/auth/change-username` | POST | Cookie | Change admin username |
+
+Auth: Cookie routes check `spamo_session` cookie or `Authorization: Bearer <token>` header via `AuthMiddleware`.
+
+### Webhook path
+
+The webhook endpoint is the static constant `/api/webhook/tg` (`main.go:25`). It is NOT a URL-path-based token — the secret is validated via the `Telego-Webhook-Secret-Token` HTTP header. Allowed update types: `message`, `chat_member`, `my_chat_member`, `callback_query`.
+
+### SSE protocol
+
+Two event types:
+- `event: history\ndata: <json-array>\n\n` — sent on connect (ring buffer dump)
+- `event: log\ndata: <json-entry>\n\n` — each new entry in real-time
+
+Keepalive comments (`: keepalive\n\n`) every 30 seconds. Frontend reconnects every 3s on disconnect.
+
+## Session Tokens
+
+The `JWTManager` in `internal/auth/auth.go` is **not** standard JWT — it's a custom HMAC-SHA256 token scheme.
+
+Token format: `username|issuedAt|expiresAt.hexSignature`
+
+- Cookie name: `spamo_session`, HTTP-only, SameSite=Lax
+- Token expiry: 24 hours
+- Refresh threshold: 12 hours
+- Secret: `JWT_SECRET` env var, or auto-generated 32-byte random hex on startup
 
 ## Telego Type Gotchas
 
@@ -146,6 +208,7 @@ for _, e := range *msg.Entities { ... }  // ✗ compile error
 - Single connection (`MaxOpenConns=1`) with `sync.RWMutex` wrapper
 - WAL journal mode, busy_timeout=5000ms
 - Schema auto-migrates on startup via `CREATE TABLE IF NOT EXISTS`
+- Password hashing uses `golang.org/x/crypto/bcrypt`
 
 ## Frontend
 
@@ -153,6 +216,12 @@ for _, e := range *msg.Entities { ... }  // ✗ compile error
 - The HTML file is embedded at compile time via `//go:embed index.html`
 - SSE reconnects automatically every 3 seconds on disconnect
 - Logs are capped at 2000 in the browser (trimmed to 1000 when exceeded)
+- Display slice is the last 200 entries
+- Category filter toggle buttons for each event category
+- Text search across messages/categories/usernames
+- Auto-scroll toggle
+- Bot status indicators: NO TOKEN / ACTIVE / PAUSED
+- Settings modal: bot token management, password change, username change
 
 ## Adding a New Event Category
 
@@ -165,13 +234,15 @@ for _, e := range *msg.Entities { ... }  // ✗ compile error
 
 | Variable | Required | Default |
 |---|---|---|
-| `BOT_TOKEN` | Yes | — |
-| `PUBLIC_URL` | Yes | — |
+| `BOT_TOKEN` | No* | — |
+| `PUBLIC_URL` | No* | — |
 | `WEBHOOK_SECRET` | No | `spamo-whsec` |
 | `PORT` | No | `8080` |
 | `DB_PATH` | No | `./data/spam-observer.db` |
 | `INITIAL_ADMIN_USERNAME` | No | `admin` |
 | `INITIAL_ADMIN_PASSWORD` | No | `admin` |
 | `JWT_SECRET` | No | (auto-generated) |
+
+\* `BOT_TOKEN` can alternatively be set via the Settings UI and stored in SQLite. `PUBLIC_URL` is only needed for webhook registration — without it the bot starts but doesn't receive updates.
 
 Admin credentials are only written to the database on first run. Changing env vars after first run has no effect on the admin password — use the `UpdateAdminPassword` method or reset the DB.
