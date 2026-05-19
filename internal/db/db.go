@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spam-observer/internal/logstream"
 	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -22,8 +23,8 @@ type AdminSettings struct {
 }
 
 type MonitoredGroup struct {
-	ChatID    int64
-	AddedAt   time.Time
+	ChatID  int64     `json:"chat_id"`
+	AddedAt time.Time `json:"added_at"`
 }
 
 type NewUserInfo struct {
@@ -115,6 +116,26 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("UPDATE monitored_groups SET added_at = added_at || 'Z' WHERE added_at NOT LIKE '%Z'")
 	_, _ = s.db.Exec("UPDATE new_users SET joined_at = joined_at || 'Z' WHERE joined_at NOT LIKE '%Z'")
 	_, _ = s.db.Exec("UPDATE verification_bots SET added_at = added_at || 'Z' WHERE added_at NOT LIKE '%Z'")
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS event_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL,
+			level TEXT NOT NULL,
+			category TEXT NOT NULL,
+			chat_id INTEGER NOT NULL DEFAULT 0,
+			user_id INTEGER NOT NULL DEFAULT 0,
+			username TEXT NOT NULL DEFAULT '',
+			is_new INTEGER NOT NULL DEFAULT 0,
+			mutual_groups INTEGER NOT NULL DEFAULT 0,
+			message TEXT NOT NULL DEFAULT '',
+			raw TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_event_logs_timestamp ON event_logs(timestamp);
+	`)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -430,4 +451,66 @@ func (s *Store) GetVerificationBotIDs() map[int64]struct{} {
 		m[id] = struct{}{}
 	}
 	return m
+}
+
+func (s *Store) InsertLog(e logstream.Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	isNew := 0
+	if e.IsNew {
+		isNew = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO event_logs (timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Timestamp.UTC().Format(time.RFC3339Nano),
+		e.Level, e.Category, e.ChatID, e.UserID, e.Username,
+		isNew, e.MutualGroups, e.Message, e.Raw,
+	)
+	return err
+}
+
+func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		`SELECT timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		 FROM event_logs ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []logstream.Entry
+	for rows.Next() {
+		var e logstream.Entry
+		var ts string
+		var isNew int
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.ChatID, &e.UserID, &e.Username,
+			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		e.IsNew = isNew == 1
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return entries, nil
+}
+
+func (s *Store) PurgeOldLogs(olderThan time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec("DELETE FROM event_logs WHERE timestamp < ?", cutoff)
+	return err
 }

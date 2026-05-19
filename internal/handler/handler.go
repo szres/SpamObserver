@@ -54,6 +54,7 @@ func (h *Handler) Register(app *fiber.App) {
 
 	api.Get("/bot/status", h.handleBotStatus)
 	api.Get("/bot/info", h.handleBotInfo)
+	api.Get("/bot/new-users-count", h.handleNewUsersCount)
 
 	configGroup := api.Group("/config", auth.AuthMiddleware(h.jwt, nil))
 	configGroup.Get("/groups", h.handleListGroups)
@@ -173,8 +174,8 @@ func (h *Handler) handleSSEStream(c fiber.Ctx) error {
 	c.Set("X-Accel-Buffering", "no")
 
 	return c.SendStreamWriter(func(w *bufio.Writer) {
-		recent := h.broker.Recent()
-		if len(recent) > 0 {
+		recent, err := h.store.GetRecentLogs(200)
+		if err == nil && len(recent) > 0 {
 			data, _ := json.Marshal(recent)
 			fmt.Fprintf(w, "event: history\ndata: %s\n\n", data)
 			w.Flush()
@@ -204,8 +205,8 @@ func (h *Handler) handleSSEStream(c fiber.Ctx) error {
 }
 
 func (h *Handler) handleRecentLogs(c fiber.Ctx) error {
-	recent := h.broker.Recent()
-	if recent == nil {
+	recent, err := h.store.GetRecentLogs(200)
+	if err != nil {
 		recent = []logstream.Entry{}
 	}
 	return c.JSON(recent)
@@ -243,6 +244,11 @@ func (h *Handler) handleBotInfo(c fiber.Ctx) error {
 		"has_token": hasToken,
 		"enabled":   h.botEnabled.Load(),
 	})
+}
+
+func (h *Handler) handleNewUsersCount(c fiber.Ctx) error {
+	users := h.tracker.GetAllNew()
+	return c.JSON(fiber.Map{"count": len(users)})
 }
 
 func (h *Handler) handleGetBotToken(c fiber.Ctx) error {

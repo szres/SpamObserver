@@ -61,6 +61,21 @@ func main() {
 
 	broker := logstream.NewBroker()
 	defer broker.Close()
+	broker.OnPublish = func(e logstream.Entry) {
+		if err := store.InsertLog(e); err != nil {
+			log.Printf("Failed to persist log entry: %v", err)
+		}
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := store.PurgeOldLogs(7 * 24 * time.Hour); err != nil {
+				log.Printf("Failed to purge old logs: %v", err)
+			}
+		}
+	}()
 
 	jwt := auth.NewJWTManager()
 

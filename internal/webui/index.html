@@ -20,7 +20,10 @@
   </script>
   <style>
     [x-cloak] { display: none !important; }
-    .log-line { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
+    .log-card { font-size: 13px; line-height: 1.5; border-left: 3px solid transparent; }
+    .log-card-level-info { border-left-color: #3b82f6; }
+    .log-card-level-warn { border-left-color: #eab308; }
+    .log-card-level-error { border-left-color: #ef4444; }
     .log-terminal { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
     .log-terminal::-webkit-scrollbar { width: 6px; }
     .log-terminal::-webkit-scrollbar-track { background: #0d1117; }
@@ -84,7 +87,7 @@
       </div>
       <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
         <div class="text-xs text-gray-500 uppercase tracking-wider">NEW Users (24h)</div>
-        <div class="text-2xl font-bold text-purple-400 mt-1" x-text="newUsers.length">0</div>
+        <div class="text-2xl font-bold text-purple-400 mt-1" x-text="newUserCount">0</div>
       </div>
     </div>
 
@@ -179,25 +182,26 @@
               <div class="text-center text-gray-600 text-sm py-8">Waiting for events...</div>
             </template>
             <template x-for="(log, idx) in filteredLogs" :key="idx">
-              <div class="log-line flex gap-2 px-1 py-0.5 hover:bg-dark-700 rounded"
+              <div class="log-card bg-dark-700 rounded-lg p-3 mb-2 hover:bg-dark-600 transition"
                 :class="{
-                  'text-gray-400': log.level === 'INFO',
-                  'text-yellow-400': log.level === 'WARN',
-                  'text-red-400': log.level === 'ERROR',
-                  'mt-2': log._sep
+                  'log-card-level-info': log.level === 'INFO',
+                  'log-card-level-warn': log.level === 'WARN',
+                  'log-card-level-error': log.level === 'ERROR'
                 }">
-                <span class="text-gray-600 shrink-0 w-20" x-text="formatTime(log.timestamp)"></span>
-                <span class="shrink-0 w-12 text-right"
-                  :class="{
-                    'text-blue-400': log.level === 'INFO',
-                    'text-yellow-400': log.level === 'WARN',
-                    'text-red-400': log.level === 'ERROR'
-                  }" x-text="'[' + log.level + ']'"></span>
-                <span class="shrink-0 w-28 text-cyan-400" x-text="'[' + log.category + ']'"></span>
-                <span class="text-gray-200 break-all" x-html="formatMessage(log.message)"></span>
-                <span x-show="log.is_new" class="shrink-0 text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-medium ml-1">NEW</span>
-                <span x-show="log.mutual_groups > 0" class="shrink-0 text-xs bg-orange-600 text-white px-1.5 py-0.5 rounded font-medium ml-1" x-text="'MG:' + log.mutual_groups"></span>
-                <span x-show="log.chat_id" class="shrink-0 text-gray-600 ml-auto" x-text="'chat:' + log.chat_id"></span>
+                <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                  <span class="text-xs font-bold px-1.5 py-0.5 rounded"
+                    :class="{
+                      'bg-blue-600 text-blue-100': log.level === 'INFO',
+                      'bg-yellow-600 text-yellow-100': log.level === 'WARN',
+                      'bg-red-600 text-red-100': log.level === 'ERROR'
+                    }" x-text="log.level"></span>
+                  <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-cyan-800 text-cyan-200" x-text="log.category"></span>
+                  <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
+                  <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
+                  <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
+                </div>
+                <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
+                <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono" x-text="'chat: ' + log.chat_id"></div>
               </div>
             </template>
           </div>
@@ -407,7 +411,7 @@
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
           'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND',
           'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
-          'QUOTE', 'NEW_MSG'
+          'QUOTE', 'NEW_MSG', 'NEW_USER'
         ],
         
         sseSource: null,
@@ -424,12 +428,15 @@
         newVerifyBotId: '',
         newVerifyBotLabel: '',
         newUsers: [],
+        newUserCount: 0,
 
         init() {
           this.connectSSE();
           this.fetchBotInfo();
+          this.fetchNewUserCount();
           this.restoreSession();
           setInterval(() => {
+            this.fetchNewUserCount();
             if (this.authenticated) {
               this.loadNewUsers();
             }
@@ -716,6 +723,16 @@
           } catch (e) {}
         },
 
+        async fetchNewUserCount() {
+          try {
+            const r = await fetch('/api/bot/new-users-count');
+            if (r.ok) {
+              const d = await r.json();
+              this.newUserCount = d.count || 0;
+            }
+          } catch (e) {}
+        },
+
         resetSettings() {
           this.settingsError = '';
           this.settingsSuccess = '';
@@ -795,17 +812,13 @@
             );
           }
           result.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-          const sliced = result.slice(-200);
-          for (let i = 0; i < sliced.length; i++) {
-            sliced[i]._sep = i > 0 && sliced[i].timestamp !== sliced[i-1].timestamp;
-          }
-          return sliced;
+          return result.slice(-200);
         },
 
         formatTime(ts) {
           if (!ts) return '';
           const d = new Date(ts);
-          return d.toLocaleTimeString('en-GB', { hour12: false });
+          return d.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
         },
 
         formatMessage(msg) {

@@ -81,6 +81,29 @@ func (m *Monitor) isNewUser(userID int64) bool {
 	return m.tracker.IsNew(userID)
 }
 
+func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio string) {
+	if bio == "" {
+		bio = m.fetchUserBio(userID)
+	}
+	m.tracker.MarkNew(userID, chatID, displayName, username, bio)
+
+	bioDisplay := bio
+	if bioDisplay == "" {
+		bioDisplay = "(none)"
+	}
+	m.broker.Publish(logstream.Entry{
+		Timestamp: time.Now(),
+		Level:     "INFO",
+		Category:  "NEW_USER",
+		ChatID:    chatID,
+		UserID:    userID,
+		Username:  username,
+		IsNew:     true,
+		Message: fmt.Sprintf("New user: %s (@%s, Bio: %s)",
+			userRef(userID, displayName), username, bioDisplay),
+	})
+}
+
 func (m *Monitor) processMessage(msg *telego.Message) {
 	chatID := msg.Chat.ID
 	if !m.isMonitored(chatID) {
@@ -89,39 +112,38 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 
 	if len(msg.NewChatMembers) > 0 {
 		for _, member := range msg.NewChatMembers {
-			bio := ""
-			if !member.IsBot {
-				bio = m.fetchUserBio(member.ID)
-			}
 			displayName := memberDisplayName(member)
 
 			if !member.IsBot {
-				m.tracker.MarkNew(member.ID, chatID, displayName, member.Username, bio)
-			}
+				bio := m.fetchUserBio(member.ID)
+				m.markNewUser(member.ID, chatID, displayName, member.Username, bio)
 
-			bioDisplay := bio
-			if bioDisplay == "" {
-				bioDisplay = "(none)"
+				bioDisplay := bio
+				if bioDisplay == "" {
+					bioDisplay = "(none)"
+				}
+				m.broker.Publish(logstream.Entry{
+					Timestamp: time.Unix(int64(msg.Date), 0),
+					Level:     "INFO",
+					Category:  "JOIN",
+					ChatID:    chatID,
+					UserID:    member.ID,
+					Username:  member.Username,
+					IsNew:     true,
+					Message: fmt.Sprintf("New member joined: %s (@%s, Bio: %s)",
+						userRef(member.ID, displayName), member.Username, bioDisplay),
+				})
+			} else {
+				m.broker.Publish(logstream.Entry{
+					Timestamp: time.Unix(int64(msg.Date), 0),
+					Level:     "WARN",
+					Category:  "BOT_JOIN",
+					ChatID:    chatID,
+					UserID:    member.ID,
+					Username:  member.Username,
+					Message:   fmt.Sprintf("Bot added to group: %s", userRef(member.ID, "@"+member.Username)),
+				})
 			}
-
-			entry := logstream.Entry{
-				Timestamp: time.Unix(int64(msg.Date), 0),
-				Level:     "INFO",
-				Category:  "JOIN",
-				ChatID:    chatID,
-				UserID:    member.ID,
-				Username:  member.Username,
-				IsNew:     !member.IsBot,
-				Message: fmt.Sprintf("New member joined: %s (@%s, Bio: %s, Bot: %v)",
-					userRef(member.ID, displayName), member.Username, bioDisplay, member.IsBot),
-			}
-			if member.IsBot {
-				entry.Level = "WARN"
-				entry.Category = "BOT_JOIN"
-				entry.IsNew = false
-				entry.Message = fmt.Sprintf("Bot added to group: %s", userRef(member.ID, "@"+member.Username))
-			}
-			m.broker.Publish(entry)
 		}
 	}
 
@@ -151,7 +173,7 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 	hasEntities := len(entityTags) > 0
 	hasQuote := quoteInfo != ""
 
-	if !isBot && !isNew && !hasEntities && !hasQuote {
+	if !isBot && !isNew && !hasEntities {
 		return
 	}
 
@@ -404,6 +426,16 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 	}
 
 	targetUser := newMember.MemberUser()
+
+	switch {
+	case status == telego.MemberStatusMember && update.From.ID == targetUser.ID:
+		m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
+	case status == telego.MemberStatusRestricted && update.From.IsBot:
+		if r, ok := newMember.(*telego.ChatMemberRestricted); ok && !r.CanSendMessages {
+			m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
+		}
+	}
+
 	targetIsNew := m.isNewUser(targetUser.ID)
 
 	if actorIsVerifyBot && targetIsNew {

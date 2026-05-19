@@ -34,6 +34,7 @@ type Broker struct {
 	unregister chan chan Entry
 	publish    chan Entry
 	stop       chan struct{}
+	OnPublish  func(Entry)
 }
 
 func NewBroker() *Broker {
@@ -76,7 +77,11 @@ func (b *Broker) run() {
 					close(ch)
 				}
 			}
+			onPub := b.OnPublish
 			b.mu.Unlock()
+			if onPub != nil {
+				onPub(entry)
+			}
 		case <-b.stop:
 			b.mu.Lock()
 			for ch := range b.clients {
