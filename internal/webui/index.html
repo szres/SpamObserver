@@ -41,8 +41,9 @@
         <div class="w-3 h-3 rounded-full bg-green-500 pulse-dot"></div>
         <h1 class="text-xl font-bold text-white">SpamObserver</h1>
         <span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">PASSIVE MONITOR</span>
-        <span x-show="!botReady" class="text-xs bg-yellow-900 text-yellow-300 px-2 py-0.5 rounded font-medium">NO BOT TOKEN</span>
-        <span x-show="botReady && !botEnabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded font-medium">MONITORING PAUSED</span>
+        <span x-show="!botReady" class="text-xs bg-yellow-900 text-yellow-300 px-2 py-0.5 rounded font-medium">NO TOKEN</span>
+        <span x-show="botReady && botEnabled" class="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded font-medium">ACTIVE</span>
+        <span x-show="botReady && !botEnabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded font-medium">PAUSED</span>
       </div>
       <div class="flex items-center gap-3">
         <template x-if="!authenticated">
@@ -81,9 +82,8 @@
         <div class="text-2xl font-bold text-yellow-400 mt-1" x-text="logs.filter(l => l.level === 'WARN').length">0</div>
       </div>
       <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
-        <div class="text-xs text-gray-500 uppercase tracking-wider">Bot Status</div>
-        <div class="text-2xl font-bold mt-1" :class="botReady && botEnabled ? 'text-green-400' : (botReady ? 'text-red-400' : 'text-yellow-400')" 
-          x-text="!botReady ? 'NO TOKEN' : (botEnabled ? 'ACTIVE' : 'PAUSED')">NO TOKEN</div>
+        <div class="text-xs text-gray-500 uppercase tracking-wider">Banned (24h)</div>
+        <div class="text-2xl font-bold text-red-400 mt-1" x-text="bannedCount">0</div>
       </div>
       <div class="bg-dark-800 border border-dark-600 rounded-lg p-4">
         <div class="text-xs text-gray-500 uppercase tracking-wider">NEW Users (24h)</div>
@@ -472,6 +472,7 @@
         newVerifyBotLabel: '',
         newUsers: [],
         newUserCount: 0,
+        bannedCount: 0,
 
         aiForm: { base_url: '', api_key: '', model: '' },
         aiConfigInfo: { base_url: '', api_key: '', model: '' },
@@ -483,9 +484,11 @@
           this.connectSSE();
           this.fetchBotInfo();
           this.fetchNewUserCount();
+          this.fetchBannedCount();
           this.restoreSession();
           setInterval(() => {
             this.fetchNewUserCount();
+            this.fetchBannedCount();
             if (this.authenticated) {
               this.loadNewUsers();
             }
@@ -844,6 +847,16 @@
             if (r.ok) {
               const d = await r.json();
               this.newUserCount = d.count || 0;
+            }
+          } catch (e) {}
+        },
+
+        async fetchBannedCount() {
+          try {
+            const r = await fetch('/api/bot/banned-count');
+            if (r.ok) {
+              const d = await r.json();
+              this.bannedCount = d.count || 0;
             }
           } catch (e) {}
         },
