@@ -418,13 +418,14 @@ func (h *Handler) handleTestAIConfig(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "AI config incomplete"})
 	}
 
+	resolvedURL := ai.BuildAPIURL(cfg.BaseURL)
 	ctx := c.Context()
 	aiCfg := ai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
 	testErr := ai.TestConnection(ctx, aiCfg)
 	if testErr != nil {
-		return c.JSON(fiber.Map{"ok": false, "error": testErr.Error()})
+		return c.JSON(fiber.Map{"ok": false, "error": testErr.Error(), "url": resolvedURL})
 	}
-	return c.JSON(fiber.Map{"ok": true})
+	return c.JSON(fiber.Map{"ok": true, "url": resolvedURL})
 }
 
 func InitAdmin(store *db.Store) error {

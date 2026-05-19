@@ -44,6 +44,38 @@ type AssessResult struct {
 	Duration  time.Duration
 }
 
+func BuildAPIURL(baseURL string) string {
+	u := strings.TrimSpace(baseURL)
+	u = strings.TrimRight(u, "/")
+	if strings.HasSuffix(u, "/v1/chat/completions") {
+		return u
+	}
+	if strings.HasSuffix(u, "/v1") {
+		return u + "/chat/completions"
+	}
+	if strings.HasSuffix(u, "/chat/completions") {
+		return u
+	}
+	return u + "/v1/chat/completions"
+}
+
+func noRedirectClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func truncateBody(b []byte, max int) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
+}
+
 func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*AssessResult, error) {
 	start := time.Now()
 
@@ -82,7 +114,7 @@ func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*A
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := strings.TrimRight(cfg.BaseURL, "/") + "/v1/chat/completions"
+	url := BuildAPIURL(cfg.BaseURL)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -91,7 +123,7 @@ func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*A
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := noRedirectClient(30 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
@@ -104,7 +136,7 @@ func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*A
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
 	}
 
 	var chatResp chatResponse
@@ -150,7 +182,7 @@ func TestConnection(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := strings.TrimRight(cfg.BaseURL, "/") + "/v1/chat/completions"
+	url := BuildAPIURL(cfg.BaseURL)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -159,16 +191,16 @@ func TestConnection(ctx context.Context, cfg Config) error {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := noRedirectClient(15 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("http request: %w", err)
+		return fmt.Errorf("request to %s failed: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("request to %s returned status %d: %s", url, resp.StatusCode, truncateBody(respBody, 200))
 	}
 
 	return nil

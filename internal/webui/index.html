@@ -166,7 +166,7 @@
               <span class="w-2 h-2 rounded-full bg-green-500 pulse-dot" x-show="sseConnected"></span>
             </h2>
             <div class="flex items-center gap-2">
-              <input type="text" x-model="searchQuery" placeholder="Search logs..."
+              <input type="text" x-model="searchQuery" placeholder="Search logs..." autocomplete="off" name="log-search"
                 class="bg-dark-900 border border-dark-600 rounded px-2 py-1 text-xs text-white w-40 focus:outline-none focus:border-blue-500">
               <button @click="autoScroll = !autoScroll"
                 :class="autoScroll ? 'text-green-400' : 'text-gray-500'"
@@ -250,13 +250,13 @@
 
   <!-- Settings Modal -->
   <div x-show="showSettings" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="showSettings = false; resetSettings()">
-    <div class="bg-dark-800 border border-dark-600 rounded-lg w-full max-w-md shadow-xl overflow-hidden" @click.stop>
+    <div class="bg-dark-800 border border-dark-600 rounded-lg w-full max-w-lg shadow-xl overflow-hidden" @click.stop>
       <div class="px-6 py-4 border-b border-dark-600 flex items-center justify-between">
         <h2 class="text-lg font-bold text-white">Settings</h2>
         <button @click="showSettings = false; resetSettings()" class="text-gray-500 hover:text-white transition text-xl">&times;</button>
       </div>
 
-      <div class="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+      <div class="p-6 space-y-6 max-h-[85vh] overflow-y-auto">
         <!-- Bot Token -->
         <div>
           <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Bot Token</h3>
@@ -366,7 +366,7 @@
                 <span x-show="aiTestLoading">Testing...</span>
               </button>
             </div>
-            <div x-show="aiTestResult !== ''" class="text-xs rounded px-3 py-2"
+            <div x-show="aiTestResult !== ''" class="text-xs rounded px-3 py-2 break-all"
               :class="aiTestOk ? 'text-green-400 bg-green-900/20' : 'text-red-400 bg-red-900/20'"
               x-text="aiTestResult"></div>
           </div>
@@ -812,12 +812,13 @@
               headers: this.authHeaders()
             });
             const d = await r.json();
+            const urlHint = d.url ? ' (URL: ' + d.url + ')' : '';
             if (d.ok) {
               this.aiTestOk = true;
-              this.aiTestResult = 'Connection successful!';
+              this.aiTestResult = 'Connection successful!' + urlHint;
             } else {
               this.aiTestOk = false;
-              this.aiTestResult = d.error || 'Test failed';
+              this.aiTestResult = (d.error || 'Test failed') + urlHint;
             }
           } catch (e) {
             this.aiTestOk = false;
