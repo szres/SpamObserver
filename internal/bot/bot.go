@@ -86,10 +86,16 @@ func (m *Monitor) isNewUser(userID int64) bool {
 }
 
 func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio string) {
+	alreadyNew := m.isNewUser(userID)
+
 	if bio == "" {
 		bio = m.fetchUserBio(userID)
 	}
 	m.tracker.MarkNew(userID, chatID, displayName, username, bio)
+
+	if alreadyNew {
+		return
+	}
 
 	bioDisplay := bio
 	if bioDisplay == "" {
@@ -224,6 +230,10 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 	isBot := msg.From.IsBot
 	isVerifyBot := isBot && m.isVerifyBot(msg.From.ID)
 	isNew := !isBot && m.isNewUser(msg.From.ID)
+
+	if !isNew {
+		entityTags = filterTag(entityTags, "HASHTAG")
+	}
 	hasEntities := len(entityTags) > 0
 	hasQuote := quoteInfo != ""
 
@@ -583,4 +593,14 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+func filterTag(tags []string, exclude string) []string {
+	var result []string
+	for _, t := range tags {
+		if t != exclude {
+			result = append(result, t)
+		}
+	}
+	return result
 }

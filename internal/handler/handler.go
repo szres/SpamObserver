@@ -402,6 +402,12 @@ func (h *Handler) handleSetAIConfig(c fiber.Ctx) error {
 	if err := c.Bind().JSON(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
+	if body.APIKey == "" {
+		existing, err := h.store.GetAIConfig()
+		if err == nil && existing.APIKey != "" {
+			body.APIKey = existing.APIKey
+		}
+	}
 	if err := h.store.SetAIConfig(body); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save AI config"})
 	}

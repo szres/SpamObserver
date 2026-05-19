@@ -144,7 +144,7 @@
                 class="text-xs px-2 py-1 rounded transition font-medium">NEW Users Only</button>
             </div>
             <div class="flex flex-wrap gap-1.5">
-              <template x-for="cat in availableCategories" :key="cat">
+              <template x-for="cat in (authenticated ? availableCategories.concat(adminCategories) : availableCategories)" :key="cat">
                 <button @click="toggleFilter(cat)"
                   :class="activeFilters.includes(cat) ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
                   class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
@@ -167,6 +167,7 @@
             </h2>
             <div class="flex items-center gap-2">
               <input type="text" x-model="searchQuery" placeholder="Search logs..." autocomplete="off" name="log-search"
+                readonly onfocus="this.removeAttribute('readonly')"
                 class="bg-dark-900 border border-dark-600 rounded px-2 py-1 text-xs text-white w-40 focus:outline-none focus:border-blue-500">
               <button @click="autoScroll = !autoScroll"
                 :class="autoScroll ? 'text-green-400' : 'text-gray-500'"
@@ -450,10 +451,11 @@
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
-          'TEXT_LINK', 'MENTION', 'HASHTAG', 'BOT_COMMAND',
+          'TEXT_LINK', 'MENTION', 'BOT_COMMAND',
           'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
           'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS'
         ],
+        adminCategories: ['SYSTEM', 'CONFIG'],
         
         sseSource: null,
 
@@ -913,6 +915,9 @@
 
         get filteredLogs() {
           let result = [...this.logs];
+          if (!this.authenticated) {
+            result = result.filter(l => !this.adminCategories.includes(l.category));
+          }
           if (this.filterNewOnly) {
             result = result.filter(l => l.is_new);
           }
