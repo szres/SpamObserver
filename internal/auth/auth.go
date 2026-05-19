@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,11 +74,18 @@ func (j *JWTManager) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("invalid signature")
 	}
 
-	var username string
-	var issuedAt, expiresAt int64
-	_, err := fmt.Sscanf(payload, "%s|%d|%d", &username, &issuedAt, &expiresAt)
+	parts := strings.SplitN(payload, "|", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid payload format")
+	}
+	username := parts[0]
+	_, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid payload: %w", err)
+		return nil, fmt.Errorf("invalid issuedAt: %w", err)
+	}
+	expiresAt, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid expiresAt: %w", err)
 	}
 
 	exp := time.Unix(expiresAt, 0)
