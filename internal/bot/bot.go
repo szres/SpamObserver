@@ -14,14 +14,15 @@ import (
 )
 
 type Monitor struct {
-	broker     *logstream.Broker
-	monitored  func() map[int64]struct{}
-	enabled    func() bool
-	tracker    *tracker.Tracker
-	bot        atomic.Pointer[telego.Bot]
-	verifyBots func() map[int64]struct{}
-	aiConfig   func() *ai.Config
+	broker      *logstream.Broker
+	monitored   func() map[int64]struct{}
+	enabled     func() bool
+	tracker     *tracker.Tracker
+	bot         atomic.Pointer[telego.Bot]
+	verifyBots  func() map[int64]struct{}
+	aiConfig    func() *ai.Config
 	updateTitle func(chatID int64, title string)
+	warnInGroup func() bool
 }
 
 func New(
@@ -32,6 +33,7 @@ func New(
 	verifyBots func() map[int64]struct{},
 	aiConfig func() *ai.Config,
 	updateTitle func(chatID int64, title string),
+	warnInGroup func() bool,
 ) *Monitor {
 	return &Monitor{
 		broker:      broker,
@@ -41,6 +43,7 @@ func New(
 		verifyBots:  verifyBots,
 		aiConfig:    aiConfig,
 		updateTitle: updateTitle,
+		warnInGroup: warnInGroup,
 	}
 }
 
@@ -158,9 +161,13 @@ func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bi
 
 	level := "INFO"
 	category := "AI_ASSESS"
+	isSpam := result.RiskLevel == "确认spam" || result.RiskLevel == "高风险"
 	if result.RiskLevel == "确认spam" {
 		level = "WARN"
 		category = "SPAM_CONFIRMED"
+	} else if result.RiskLevel == "高风险" {
+		level = "WARN"
+		category = "SPAM_HIGH_RISK"
 	}
 
 	m.broker.Publish(logstream.Entry{
@@ -175,6 +182,74 @@ func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bi
 			userRef(userID, displayName), username, bioDisplay,
 			result.RiskLevel, result.Reason,
 			result.Duration.Seconds()),
+	})
+
+	if isSpam && m.warnInGroup != nil && m.warnInGroup() {
+		m.sendSpamWarning(chatID, userID, displayName, username)
+	}
+}
+
+func (m *Monitor) sendSpamWarning(chatID int64, userID int64, displayName, username string) {
+	b := m.bot.Load()
+	if b == nil {
+		return
+	}
+
+	mention := displayName
+	if username != "" {
+		mention = "@" + username
+	}
+	text := fmt.Sprintf("检测到spam账号 %s 入群，建议立即移除。", mention)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sent, err := b.SendMessage(ctx, &telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
+		Text:   text,
+	})
+	if err != nil {
+		m.broker.Publish(logstream.Entry{
+			Timestamp: time.Now(),
+			Level:     "WARN",
+			Category:  "SPAM_WARNING",
+			ChatID:    chatID,
+			UserID:    userID,
+			Username:  username,
+			IsNew:     true,
+			Message:   fmt.Sprintf("Failed to send spam warning for %s: %v", userRef(userID, displayName), err),
+		})
+		return
+	}
+
+	m.broker.Publish(logstream.Entry{
+		Timestamp: time.Now(),
+		Level:     "INFO",
+		Category:  "SPAM_WARNING",
+		ChatID:    chatID,
+		UserID:    userID,
+		Username:  username,
+		IsNew:     true,
+		Message:   fmt.Sprintf("Spam warning sent for %s, will auto-delete in 120s", userRef(userID, displayName)),
+	})
+
+	go m.scheduleDeleteMessage(chatID, sent.MessageID, 120*time.Second)
+}
+
+func (m *Monitor) scheduleDeleteMessage(chatID int64, messageID int, delay time.Duration) {
+	time.Sleep(delay)
+
+	b := m.bot.Load()
+	if b == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_ = b.DeleteMessage(ctx, &telego.DeleteMessageParams{
+		ChatID:    telego.ChatID{ID: chatID},
+		MessageID: messageID,
 	})
 }
 

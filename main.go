@@ -90,6 +90,13 @@ func main() {
 		botEnabled.Store(true)
 	}
 
+	warnInGroup := new(atomic.Bool)
+	if wig, err := store.GetWarnInGroup(); err == nil {
+		warnInGroup.Store(wig)
+	} else {
+		warnInGroup.Store(false)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:           "SpamObserver",
 		BodyLimit:         1 * 1024 * 1024,
@@ -112,7 +119,7 @@ func main() {
 	}
 	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn, func(chatID int64, title string) {
 		_ = store.UpdateGroupTitle(chatID, title)
-	})
+	}, warnInGroup.Load)
 
 	var (
 		botMu     sync.Mutex
@@ -196,7 +203,7 @@ func main() {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	h := handler.New(store, broker, jwt, botEnabled, startBot, trk)
+	h := handler.New(store, broker, jwt, botEnabled, startBot, trk, warnInGroup)
 	h.Register(app)
 
 	broker.Publish(logstream.Info("SYSTEM", "SpamObserver starting on port %s", port))

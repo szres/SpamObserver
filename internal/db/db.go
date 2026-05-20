@@ -97,6 +97,7 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE monitored_groups ADD COLUMN title TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN warn_in_group INTEGER NOT NULL DEFAULT 0")
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS new_users (
@@ -226,6 +227,30 @@ func (s *Store) SetBotEnabled(enabled bool) error {
 		v = 1
 	}
 	_, err := s.db.Exec("UPDATE admin_settings SET bot_enabled = ? WHERE id = 1", v)
+	return err
+}
+
+func (s *Store) GetWarnInGroup() (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var enabled int
+	err := s.db.QueryRow("SELECT warn_in_group FROM admin_settings WHERE id = 1").Scan(&enabled)
+	if err != nil {
+		return false, err
+	}
+	return enabled == 1, nil
+}
+
+func (s *Store) SetWarnInGroup(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.db.Exec("UPDATE admin_settings SET warn_in_group = ? WHERE id = 1", v)
 	return err
 }
 

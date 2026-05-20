@@ -34,22 +34,24 @@ func (h *Handler) isAuthenticated(c fiber.Ctx) bool {
 }
 
 type Handler struct {
-	store      *db.Store
-	broker     *logstream.Broker
-	jwt        *auth.JWTManager
-	botEnabled *atomic.Bool
-	restartBot func(token string) error
-	tracker    *tracker.Tracker
+	store       *db.Store
+	broker      *logstream.Broker
+	jwt         *auth.JWTManager
+	botEnabled  *atomic.Bool
+	restartBot  func(token string) error
+	tracker     *tracker.Tracker
+	warnInGroup *atomic.Bool
 }
 
-func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool, restartBot func(token string) error, t *tracker.Tracker) *Handler {
+func New(store *db.Store, broker *logstream.Broker, jwt *auth.JWTManager, botEnabled *atomic.Bool, restartBot func(token string) error, t *tracker.Tracker, warnInGroup *atomic.Bool) *Handler {
 	return &Handler{
-		store:      store,
-		broker:     broker,
-		jwt:        jwt,
-		botEnabled: botEnabled,
-		restartBot: restartBot,
-		tracker:    t,
+		store:       store,
+		broker:      broker,
+		jwt:         jwt,
+		botEnabled:  botEnabled,
+		restartBot:  restartBot,
+		tracker:     t,
+		warnInGroup: warnInGroup,
 	}
 }
 
@@ -80,6 +82,8 @@ func (h *Handler) Register(app *fiber.App) {
 	configGroup.Post("/groups", h.handleAddGroup)
 	configGroup.Delete("/groups/:chatId", h.handleRemoveGroup)
 	configGroup.Post("/bot/toggle", h.handleBotToggle)
+	configGroup.Get("/bot/warn-in-group", h.handleGetWarnInGroup)
+	configGroup.Post("/bot/warn-in-group", h.handleSetWarnInGroup)
 	configGroup.Get("/bot/token", h.handleGetBotToken)
 	configGroup.Post("/bot/token", h.handleSetBotToken)
 	configGroup.Post("/auth/change-password", h.handleChangePassword)
@@ -271,6 +275,32 @@ func (h *Handler) handleBotToggle(c fiber.Ctx) error {
 	h.broker.Publish(logstream.Info("SYSTEM", "Bot monitoring %s", state))
 
 	return c.JSON(fiber.Map{"ok": true, "enabled": body.Enabled})
+}
+
+func (h *Handler) handleGetWarnInGroup(c fiber.Ctx) error {
+	return c.JSON(fiber.Map{"warn_in_group": h.warnInGroup.Load()})
+}
+
+func (h *Handler) handleSetWarnInGroup(c fiber.Ctx) error {
+	var body struct {
+		WarnInGroup bool `json:"warn_in_group"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+
+	if err := h.store.SetWarnInGroup(body.WarnInGroup); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update warn-in-group setting"})
+	}
+	h.warnInGroup.Store(body.WarnInGroup)
+
+	state := "disabled"
+	if body.WarnInGroup {
+		state = "enabled"
+	}
+	h.broker.Publish(logstream.Info("CONFIG", "Group warning messages %s", state))
+
+	return c.JSON(fiber.Map{"ok": true, "warn_in_group": body.WarnInGroup})
 }
 
 func (h *Handler) handleBotInfo(c fiber.Ctx) error {
