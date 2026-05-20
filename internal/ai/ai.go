@@ -79,39 +79,56 @@ func truncateBody(b []byte, max int) string {
 func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*AssessResult, error) {
 	start := time.Now()
 
-	prompt := fmt.Sprintf(`你是一个Telegram群组反垃圾/反广告分析助手。请根据以下用户信息判断其为广告、垃圾信息或诈骗用户的风险等级。
+	prompt := fmt.Sprintf(`你是一个Telegram群组反垃圾/反诈骗分析助手。请根据以下用户信息判断其风险等级。
+
+重要：风险等级的后果不同——"确认spam"会自动封禁用户，"高风险"会提交人工审核。因此"确认spam"必须是确凿无疑的垃圾/诈骗号，而可疑但不确定的应判为"高风险"。
 
 用户信息：
 - Name: %s
 - Username: @%s
 - Bio: %s
 
-判断标准：
+═══ 判断标准 ═══
 
-【确认spam】— 以下任意一条即确认为spam：
-1. Name或Bio中包含明显的虚拟货币/金融推广词汇，如：虚拟货币搬砖、日挣/日入+金额、币安上押、USDT搬砖、搞米、赚钱暗语
-2. Bio中包含明显的赚钱诱导内容+外部链接(如t.me/+邀请链接)，如：一天保你XXX、带几个缺钱的兄弟、只要你肯付出
-3. Name或Bio中包含转账、代付、洗钱等金融违规词汇+可疑Username
+【确认spam】— 必须确凿无疑，符合以下任意一条：
 
-【高风险】— 以下特征组合：
-1. Username和Bio均为空或无意义
-2. Username为随机字母数字组合(如xxxla3、daxiaole1、z4y1wwd等) + Bio含可疑内容
-3. Name使用常见中文昵称但配合可疑Bio
-4. Bio含单一可疑词但无明显诱导行为
+1. 金融推广/诈骗：Name或Bio中包含明确的虚拟货币/金融推广词汇，如：虚拟货币搬砖、日挣/日入+金额、币安上押、USDT搬砖、搞米、搞钱、赚钱暗语
+2. 赚钱诱导+链接：Bio中包含明确的赚钱诱导内容+外部链接(如t.me/+邀请链接)，如：一天保你XXX、带几个缺钱的兄弟、只要你肯付出
+3. 明确金融违规：Name或Bio中明确包含转账、代付、洗钱、跑分、卡农等金融违规词汇
+4. 批量注册特征：Name本身是一个金钱/金融相关词汇(如：辅导费、代付款、转账、佣金、回扣、返现、红包、结算) + Username为空 + Bio为空——三个条件同时满足，典型的批量注册垃圾号
 
-【中风险】— 部分可疑但不明显：
-1. Username为随机组合但Bio为空
+【高风险】— 疑似spam，需人工审核确认，符合以下任意一条：
+
+1. 诈骗地域关联：Name中包含东南亚/中东诈骗高发地区名或相关词汇，如：妙瓦底、缅北、缅甸、柬埔寨、西港、金边、菲律宾、马尼拉、迪拜、老挝、KK园区
+2. 金钱词汇作Name：Name含金钱/金融相关词汇(费/钱/币/款/元/万/收益/利润/佣金/回扣/工资) + Username为空或Bio为空（但未同时满足"确认spam-4"的三条件）
+3. 随机Username+可疑元素：Username为随机字母数字组合(如mwd11101、abc123、user888、x4y2zz) + Name或Bio中存在任何可疑元素(地域、金融、防御性声明等)
+4. 防御性声明：Bio为"此地无银三百两"式自我辩护，包含"遵纪守法"、"只做合法"、"支持国家"、"法律允许"、"合法合规"等描述，尤其配合可疑Name或随机Username——真实守法用户不会特意声明
+5. 信息不一致：Name、Username、Bio三者信息严重不一致(如Name暗示某身份但Username为随机串且Bio为空)
+6. 空Profile+可疑Name：Username和Bio均为空 + Name为非常见人名或含可疑词汇
+
+【中风险】— 部分可疑但证据不足：
+
+1. Username为随机组合但Bio为空，Name无可疑
 2. 有可疑关键词但上下文不明确
+3. Bio为空 + Name为普通词汇但非常见人名
 
-【低风险】— 正常用户
+【低风险】— 正常用户：Name为常见人名或正常昵称，Username有意义，Bio正常或为空
+
+═══ 分析要点 ═══
+
+- 重点关注Name、Username、Bio三者之间的关联性和一致性
+- 多个弱信号叠加应升级风险等级(如：可疑Name + 随机Username + 空Bio → 高风险)
+- 中文Name中的金钱相关词汇是强信号，即使看似"正常"(如"辅导费"本身是一个词，但作为人名极不正常)
+- 诈骗地名出现在Name中(如"妙瓦底的神")应判为高风险
+- 随机字母数字混合Username(如mwd11101)是机器人/批量注册的典型特征
 
 请仅返回以下JSON格式，不要有其他内容：
-{"risk_level":"低/中/高/确认spam","reason":"简要说明判断原因"}`, name, username, bio)
+{"risk_level":"低/中/高/确认spam","reason":"简要说明判断原因，必须指出具体触发了哪条规则"}`, name, username, bio)
 
 	reqBody := chatRequest{
 		Model: cfg.Model,
 		Messages: []chatMessage{
-			{Role: "system", Content: "你是一个反垃圾分析助手，只返回JSON格式结果。"},
+			{Role: "system", Content: "你是反垃圾反诈骗分析专家。只返回JSON格式结果，不要有其他内容。"},
 			{Role: "user", Content: prompt},
 		},
 	}
