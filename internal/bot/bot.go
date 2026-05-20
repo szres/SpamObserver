@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,11 @@ type Monitor struct {
 	aiConfig    func() *ai.Config
 	updateTitle func(chatID int64, title string)
 	warnInGroup func() bool
+
+	floodJoins    map[int64][]time.Time
+	floodActive   map[int64]bool
+	floodLastJoin map[int64]time.Time
+	floodMu       sync.Mutex
 }
 
 func New(
@@ -35,16 +41,21 @@ func New(
 	updateTitle func(chatID int64, title string),
 	warnInGroup func() bool,
 ) *Monitor {
-	return &Monitor{
-		broker:      broker,
-		monitored:   monitored,
-		enabled:     enabled,
-		tracker:     t,
-		verifyBots:  verifyBots,
-		aiConfig:    aiConfig,
-		updateTitle: updateTitle,
-		warnInGroup: warnInGroup,
+	m := &Monitor{
+		broker:        broker,
+		monitored:     monitored,
+		enabled:       enabled,
+		tracker:       t,
+		verifyBots:    verifyBots,
+		aiConfig:      aiConfig,
+		updateTitle:   updateTitle,
+		warnInGroup:   warnInGroup,
+		floodJoins:    make(map[int64][]time.Time),
+		floodActive:   make(map[int64]bool),
+		floodLastJoin: make(map[int64]time.Time),
 	}
+	go m.startFloodCleanup()
+	return m
 }
 
 func (m *Monitor) SetBot(b *telego.Bot) {
@@ -123,7 +134,22 @@ func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio s
 			userRef(userID, displayName), username, bioDisplay),
 	})
 
-	go m.assessUserSpam(userID, chatID, displayName, username, bio)
+	if m.isFloodActive(chatID) {
+		m.broker.Publish(logstream.Entry{
+			Timestamp: time.Now(),
+			Level:     "WARN",
+			Category:  "SPAM_CONFIRMED",
+			ChatID:    chatID,
+			UserID:    userID,
+			Username:  username,
+			IsNew:     true,
+			Tags:      []string{"FLOOD"},
+			Message: fmt.Sprintf("[FLOOD] Direct SPAM: %s (@%s) — flood mode, AI skipped",
+				userRef(userID, displayName), username),
+		})
+	} else {
+		go m.assessUserSpam(userID, chatID, displayName, username, bio)
+	}
 }
 
 func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bio string) {
@@ -253,6 +279,110 @@ func (m *Monitor) scheduleDeleteMessage(chatID int64, messageID int, delay time.
 	})
 }
 
+func (m *Monitor) recordJoin(chatID int64) {
+	m.floodMu.Lock()
+	defer m.floodMu.Unlock()
+
+	now := time.Now()
+	m.floodJoins[chatID] = append(m.floodJoins[chatID], now)
+	m.floodLastJoin[chatID] = now
+
+	cutoff := now.Add(-1 * time.Minute)
+	var recent []time.Time
+	for _, t := range m.floodJoins[chatID] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	m.floodJoins[chatID] = recent
+
+	if !m.floodActive[chatID] && len(recent) >= 3 {
+		m.floodActive[chatID] = true
+		m.broker.Publish(logstream.Entry{
+			Timestamp: now,
+			Level:     "WARN",
+			Category:  "FLOOD_ALERT",
+			ChatID:    chatID,
+			Tags:      []string{"FLOOD"},
+			Message:   fmt.Sprintf("Flood detected in chat %d: %d joins within 1 minute", chatID, len(recent)),
+		})
+		go m.sendFloodWarning(chatID)
+	}
+}
+
+func (m *Monitor) isFloodActive(chatID int64) bool {
+	m.floodMu.Lock()
+	defer m.floodMu.Unlock()
+	return m.floodActive[chatID]
+}
+
+func (m *Monitor) startFloodCleanup() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.floodMu.Lock()
+		now := time.Now()
+		for chatID, lastJoin := range m.floodLastJoin {
+			if now.Sub(lastJoin) > 1*time.Minute {
+				delete(m.floodJoins, chatID)
+				delete(m.floodActive, chatID)
+				delete(m.floodLastJoin, chatID)
+				m.broker.Publish(logstream.Entry{
+					Timestamp: now,
+					Level:     "INFO",
+					Category:  "FLOOD_END",
+					ChatID:    chatID,
+					Tags:      []string{"FLOOD"},
+					Message:   fmt.Sprintf("Flood mode ended for chat %d: no joins for 1 minute", chatID),
+				})
+			}
+		}
+		m.floodMu.Unlock()
+	}
+}
+
+func (m *Monitor) sendFloodWarning(chatID int64) {
+	if m.warnInGroup == nil || !m.warnInGroup() {
+		return
+	}
+
+	b := m.bot.Load()
+	if b == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	text := "⚠️ 检测到正在遭受SPAM洪流攻击，建议临时禁止入群。"
+	sent, err := b.SendMessage(ctx, &telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
+		Text:   text,
+	})
+	if err != nil {
+		m.broker.Publish(logstream.Entry{
+			Timestamp: time.Now(),
+			Level:     "WARN",
+			Category:  "FLOOD_ALERT",
+			ChatID:    chatID,
+			Tags:      []string{"FLOOD"},
+			Message:   fmt.Sprintf("Failed to send flood warning to chat %d: %v", chatID, err),
+		})
+		return
+	}
+
+	m.broker.Publish(logstream.Entry{
+		Timestamp: time.Now(),
+		Level:     "INFO",
+		Category:  "FLOOD_ALERT",
+		ChatID:    chatID,
+		Tags:      []string{"FLOOD"},
+		Message:   fmt.Sprintf("Flood warning sent to chat %d, will auto-delete in 120s", chatID),
+	})
+
+	go m.scheduleDeleteMessage(chatID, sent.MessageID, 120*time.Second)
+}
+
 func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	chatID := msg.Chat.ID
 	if !m.isMonitored(chatID) {
@@ -268,6 +398,7 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 			displayName := memberDisplayName(member)
 
 			if !member.IsBot {
+				m.recordJoin(chatID)
 				bio := m.fetchUserBio(member.ID)
 				m.markNewUser(member.ID, chatID, displayName, member.Username, bio)
 
@@ -597,9 +728,11 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 
 	switch {
 	case status == telego.MemberStatusMember && update.From.ID == targetUser.ID:
+		m.recordJoin(chatID)
 		m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 	case status == telego.MemberStatusRestricted && update.From.IsBot:
 		if r, ok := newMember.(*telego.ChatMemberRestricted); ok && !r.CanSendMessages {
+			m.recordJoin(chatID)
 			m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 		}
 	}
