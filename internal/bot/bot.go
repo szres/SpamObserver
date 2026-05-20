@@ -118,6 +118,8 @@ func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio s
 		return
 	}
 
+	m.recordJoin(chatID)
+
 	bioDisplay := bio
 	if bioDisplay == "" {
 		bioDisplay = "(none)"
@@ -398,7 +400,6 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 			displayName := memberDisplayName(member)
 
 			if !member.IsBot {
-				m.recordJoin(chatID)
 				bio := m.fetchUserBio(member.ID)
 				m.markNewUser(member.ID, chatID, displayName, member.Username, bio)
 
@@ -728,11 +729,9 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 
 	switch {
 	case status == telego.MemberStatusMember && update.From.ID == targetUser.ID:
-		m.recordJoin(chatID)
 		m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 	case status == telego.MemberStatusRestricted && update.From.IsBot:
 		if r, ok := newMember.(*telego.ChatMemberRestricted); ok && !r.CanSendMessages {
-			m.recordJoin(chatID)
 			m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 		}
 	}
