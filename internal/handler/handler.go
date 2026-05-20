@@ -18,6 +18,21 @@ import (
 	"github.com/spam-observer/internal/webui"
 )
 
+func (h *Handler) isAuthenticated(c fiber.Ctx) bool {
+	token := h.jwt.GetTokenFromCookie(c)
+	if token == "" {
+		authHeader := c.Get("Authorization")
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		}
+	}
+	if token == "" {
+		return false
+	}
+	_, err := h.jwt.Validate(token)
+	return err == nil
+}
+
 type Handler struct {
 	store      *db.Store
 	broker     *logstream.Broker
@@ -178,8 +193,16 @@ func (h *Handler) handleSSEStream(c fiber.Ctx) error {
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
 
+	authenticated := h.isAuthenticated(c)
+
 	return c.SendStreamWriter(func(w *bufio.Writer) {
-		recent, err := h.store.GetRecentLogs(200)
+		var recent []logstream.Entry
+		var err error
+		if authenticated {
+			recent, err = h.store.GetRecentLogsByDuration(24 * time.Hour)
+		} else {
+			recent, err = h.store.GetRecentLogs(200)
+		}
 		if err == nil && len(recent) > 0 {
 			data, _ := json.Marshal(recent)
 			fmt.Fprintf(w, "event: history\ndata: %s\n\n", data)
@@ -210,7 +233,12 @@ func (h *Handler) handleSSEStream(c fiber.Ctx) error {
 }
 
 func (h *Handler) handleRecentLogs(c fiber.Ctx) error {
-	recent, err := h.store.GetRecentLogs(200)
+	hoursStr := c.Query("hours", "24")
+	hours, err := strconv.Atoi(hoursStr)
+	if err != nil || hours < 1 {
+		hours = 24
+	}
+	recent, err := h.store.GetRecentLogsByDuration(time.Duration(hours) * time.Hour)
 	if err != nil {
 		recent = []logstream.Entry{}
 	}

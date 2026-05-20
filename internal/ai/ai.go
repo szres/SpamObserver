@@ -86,20 +86,27 @@ func AssessUser(ctx context.Context, cfg Config, name, username, bio string) (*A
 - Username: @%s
 - Bio: %s
 
-判断标准（参考以下高风险特征）：
-1. Name和Bio中包含宣传性文字（如"搞米"、"赚钱"、"兼职"、"转账"、"代付"等引导性或商业推广词汇）
-2. Username为随机字母数字组合（如xxxla3、daxiaole1等无意义拼接）
-3. Username和Bio均为空或无意义
-4. Bio中包含转账、支付、金融相关敏感词汇
-5. Name使用常见中文昵称但配合可疑Bio
+判断标准：
 
-高风险用户示例：
-- Name: 迅雷, Username: @daxiaole1, Bio: 搞米最重要啦 → 高风险（Bio含"搞米"即赚钱暗语，Username为随机组合）
-- Name: 小学生, Username: @xxxla3, Bio: 转账请语音确认 → 高风险（Bio含"转账"，Username为随机组合）
-- Username和Bio均为空 → 较高风险
+【确认spam】— 以下任意一条即确认为spam：
+1. Name或Bio中包含明显的虚拟货币/金融推广词汇，如：虚拟货币搬砖、日挣/日入+金额、币安上押、USDT搬砖、搞米、赚钱暗语
+2. Bio中包含明显的赚钱诱导内容+外部链接(如t.me/+邀请链接)，如：一天保你XXX、带几个缺钱的兄弟、只要你肯付出
+3. Name或Bio中包含转账、代付、洗钱等金融违规词汇+可疑Username
+
+【高风险】— 以下特征组合：
+1. Username和Bio均为空或无意义
+2. Username为随机字母数字组合(如xxxla3、daxiaole1、z4y1wwd等) + Bio含可疑内容
+3. Name使用常见中文昵称但配合可疑Bio
+4. Bio含单一可疑词但无明显诱导行为
+
+【中风险】— 部分可疑但不明显：
+1. Username为随机组合但Bio为空
+2. 有可疑关键词但上下文不明确
+
+【低风险】— 正常用户
 
 请仅返回以下JSON格式，不要有其他内容：
-{"risk_level":"低/中/高","reason":"简要说明判断原因"}`, name, username, bio)
+{"risk_level":"低/中/高/确认spam","reason":"简要说明判断原因"}`, name, username, bio)
 
 	reqBody := chatRequest{
 		Model: cfg.Model,

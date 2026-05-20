@@ -559,6 +559,38 @@ func (s *Store) PurgeOldLogs(olderThan time.Duration) error {
 	return err
 }
 
+func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.Query(
+		`SELECT timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		 FROM event_logs WHERE timestamp >= ? ORDER BY id ASC`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []logstream.Entry
+	for rows.Next() {
+		var e logstream.Entry
+		var ts string
+		var isNew int
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.ChatID, &e.UserID, &e.Username,
+			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		e.IsNew = isNew == 1
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 func (s *Store) GetBannedCount24h() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

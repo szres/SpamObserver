@@ -86,14 +86,12 @@ func (m *Monitor) isNewUser(userID int64) bool {
 }
 
 func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio string) {
-	alreadyNew := m.isNewUser(userID)
-
 	if bio == "" {
 		bio = m.fetchUserBio(userID)
 	}
-	m.tracker.MarkNew(userID, chatID, displayName, username, bio)
 
-	if alreadyNew {
+	isNew := m.tracker.TryMarkNew(userID, chatID, displayName, username, bio)
+	if !isNew {
 		return
 	}
 
@@ -149,10 +147,17 @@ func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bi
 		return
 	}
 
+	level := "INFO"
+	category := "AI_ASSESS"
+	if result.RiskLevel == "确认spam" {
+		level = "WARN"
+		category = "SPAM_CONFIRMED"
+	}
+
 	m.broker.Publish(logstream.Entry{
 		Timestamp: time.Now(),
-		Level:     "INFO",
-		Category:  "AI_ASSESS",
+		Level:     level,
+		Category:  category,
 		ChatID:    chatID,
 		UserID:    userID,
 		Username:  username,
