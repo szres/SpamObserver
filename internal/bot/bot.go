@@ -459,8 +459,8 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	isVerifyBot := isBot && m.isVerifyBot(msg.From.ID)
 	isNew := !isBot && m.isNewUser(msg.From.ID)
 
-	if !isNew {
-		entityTags = filterTag(entityTags, "HASHTAG")
+	if !isBot && !isNew {
+		entityTags = nil
 	}
 	hasEntities := len(entityTags) > 0
 	hasQuote := quoteInfo != ""
@@ -828,12 +828,4 @@ func truncate(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-func filterTag(tags []string, exclude string) []string {
-	var result []string
-	for _, t := range tags {
-		if t != exclude {
-			result = append(result, t)
-		}
-	}
-	return result
-}
+
