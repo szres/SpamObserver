@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -97,6 +98,7 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE monitored_groups ADD COLUMN title TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN warn_in_group INTEGER NOT NULL DEFAULT 0")
 
 	_, err = s.db.Exec(`
@@ -544,11 +546,17 @@ func (s *Store) InsertLog(e logstream.Entry) error {
 	if e.IsNew {
 		isNew = 1
 	}
+	tagsJSON := "[]"
+	if len(e.Tags) > 0 {
+		if b, err := json.Marshal(e.Tags); err == nil {
+			tagsJSON = string(b)
+		}
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO event_logs (timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO event_logs (timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Timestamp.UTC().Format(time.RFC3339Nano),
-		e.Level, e.Category, e.Source, e.ChatID, e.UserID, e.Username,
+		e.Level, e.Category, tagsJSON, e.Source, e.ChatID, e.UserID, e.Username,
 		isNew, e.MutualGroups, e.Message, e.Raw,
 	)
 	return err
@@ -559,7 +567,7 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -571,12 +579,14 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 		var e logstream.Entry
 		var ts string
 		var isNew int
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.Source, &e.ChatID, &e.UserID, &e.Username,
+		var tagsJSON string
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
 		e.IsNew = isNew == 1
+		e.Tags = parseTags(tagsJSON)
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -604,7 +614,7 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 
 	cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs WHERE timestamp >= ? ORDER BY id ASC`, cutoff)
 	if err != nil {
 		return nil, err
@@ -616,18 +626,34 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 		var e logstream.Entry
 		var ts string
 		var isNew int
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.Source, &e.ChatID, &e.UserID, &e.Username,
+		var tagsJSON string
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
 		e.IsNew = isNew == 1
+		e.Tags = parseTags(tagsJSON)
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return entries, nil
+}
+
+func parseTags(tagsJSON string) []string {
+	if tagsJSON == "" || tagsJSON == "[]" {
+		return nil
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+		return nil
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
 }
 
 func (s *Store) GetBannedCount24h() (int, error) {
@@ -638,7 +664,7 @@ func (s *Store) GetBannedCount24h() (int, error) {
 	var count int
 	err := s.db.QueryRow(
 		`SELECT COUNT(DISTINCT user_id) FROM event_logs
-		 WHERE category IN ('BAN', 'VERIFY_BAN') AND timestamp >= ?`, cutoff).Scan(&count)
+		 WHERE category = 'BAN' AND timestamp >= ?`, cutoff).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

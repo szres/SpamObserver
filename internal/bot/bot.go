@@ -338,9 +338,11 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	}
 
 	var category, level string
+	var tags []string
 	switch {
 	case isVerifyBot:
-		category, level = "VERIFY_BOT_MSG", "INFO"
+		category, level = "BOT_MSG", "INFO"
+		tags = []string{"BOT_OP"}
 	case isBot:
 		category, level = "BOT_MSG", "INFO"
 	case isNew:
@@ -376,6 +378,7 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 		Timestamp:    time.Unix(int64(msg.Date), 0),
 		Level:        level,
 		Category:     category,
+		Tags:         tags,
 		Source:       source,
 		ChatID:       chatID,
 		UserID:       msg.From.ID,
@@ -603,21 +606,16 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 
 	targetIsNew := m.isNewUser(targetUser.ID)
 
+	var tags []string
 	if actorIsVerifyBot && targetIsNew {
-		switch status {
-		case telego.MemberStatusBanned:
-			category = "VERIFY_BAN"
-			level = "WARN"
-		case telego.MemberStatusRestricted:
-			category = "VERIFY_RESTRICT"
-			level = "WARN"
-		}
+		tags = []string{"BOT_OP"}
 	}
 
 	m.broker.Publish(logstream.Entry{
 		Timestamp: time.Unix(int64(update.Date), 0),
 		Level:     level,
 		Category:  category,
+		Tags:      tags,
 		ChatID:    chatID,
 		UserID:    targetUser.ID,
 		Username:  targetUser.Username,
@@ -641,9 +639,10 @@ func (m *Monitor) processCallbackQuery(cq *telego.CallbackQuery) {
 	isNew := m.isNewUser(from.ID)
 
 	category := "BUTTON"
+	var tags []string
 	if isNew {
 		if msg := cq.Message.Message(); msg != nil && msg.From.IsBot && m.isVerifyBot(msg.From.ID) {
-			category = "VERIFY_BUTTON"
+			tags = []string{"BOT_OP"}
 		}
 	}
 
@@ -651,6 +650,7 @@ func (m *Monitor) processCallbackQuery(cq *telego.CallbackQuery) {
 		Timestamp: time.Now(),
 		Level:     "INFO",
 		Category:  category,
+		Tags:      tags,
 		ChatID:    chatID,
 		UserID:    from.ID,
 		Username:  from.Username,

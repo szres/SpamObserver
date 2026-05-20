@@ -232,6 +232,7 @@
                   <span x-show="log.source === 'guest'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-700 text-orange-200">GUEST</span>
                   <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
                   <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
+                  <span x-show="log.tags && log.tags.includes('BOT_OP')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-600 text-amber-100">BOT_OP</span>
                   <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
                 </div>
                 <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
@@ -509,7 +510,7 @@
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
           'TEXT_LINK', 'MENTION', 'BOT_COMMAND',
-          'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
+          'BOT_OP',
           'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS', 'SPAM_CONFIRMED', 'SPAM_HIGH_RISK', 'SPAM_WARNING'
         ],
         adminCategories: ['SYSTEM', 'CONFIG'],
@@ -1042,7 +1043,10 @@
             result = result.filter(l => l.is_new);
           }
           if (this.activeFilters.length > 0) {
-            result = result.filter(l => this.activeFilters.includes(l.category));
+            result = result.filter(l =>
+              this.activeFilters.includes(l.category) ||
+              (l.tags && l.tags.some(t => this.activeFilters.includes(t)))
+            );
           }
           if (this.searchQuery.trim()) {
             const q = this.searchQuery.toLowerCase();

@@ -15,6 +15,7 @@ type Entry struct {
 	Timestamp    time.Time `json:"timestamp"`
 	Level        string    `json:"level"`
 	Category     string    `json:"category"`
+	Tags         []string  `json:"tags,omitempty"`
 	Source       string    `json:"source,omitempty"`
 	ChatID       int64     `json:"chat_id,omitempty"`
 	ChatName     string    `json:"chat_name,omitempty"`
