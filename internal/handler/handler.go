@@ -73,6 +73,8 @@ func (h *Handler) Register(app *fiber.App) {
 	api.Get("/bot/new-users-count", h.handleNewUsersCount)
 	api.Get("/bot/banned-count", h.handleBannedCount)
 
+	api.Get("/groups", h.handlePublicGroups)
+
 	configGroup := api.Group("/config", auth.AuthMiddleware(h.jwt, nil))
 	configGroup.Get("/groups", h.handleListGroups)
 	configGroup.Post("/groups", h.handleAddGroup)
@@ -290,6 +292,17 @@ func (h *Handler) handleBannedCount(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get banned count"})
 	}
 	return c.JSON(fiber.Map{"count": count})
+}
+
+func (h *Handler) handlePublicGroups(c fiber.Ctx) error {
+	groups, err := h.store.ListGroups()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list groups"})
+	}
+	if groups == nil {
+		groups = []db.MonitoredGroup{}
+	}
+	return c.JSON(groups)
 }
 
 func (h *Handler) handleGetBotToken(c fiber.Ctx) error {

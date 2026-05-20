@@ -24,6 +24,7 @@ type AdminSettings struct {
 
 type MonitoredGroup struct {
 	ChatID  int64     `json:"chat_id"`
+	Title   string    `json:"title"`
 	AddedAt time.Time `json:"added_at"`
 }
 
@@ -94,6 +95,8 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE monitored_groups ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS new_users (
@@ -290,7 +293,7 @@ func (s *Store) ListGroups() ([]MonitoredGroup, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT chat_id, added_at FROM monitored_groups ORDER BY added_at DESC")
+	rows, err := s.db.Query("SELECT chat_id, title, added_at FROM monitored_groups ORDER BY added_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +302,7 @@ func (s *Store) ListGroups() ([]MonitoredGroup, error) {
 	var groups []MonitoredGroup
 	for rows.Next() {
 		var g MonitoredGroup
-		if err := rows.Scan(&g.ChatID, &g.AddedAt); err != nil {
+		if err := rows.Scan(&g.ChatID, &g.Title, &g.AddedAt); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)
@@ -314,6 +317,17 @@ func (s *Store) IsMonitored(chatID int64) bool {
 	var count int
 	_ = s.db.QueryRow("SELECT COUNT(*) FROM monitored_groups WHERE chat_id = ?", chatID).Scan(&count)
 	return count > 0
+}
+
+func (s *Store) UpdateGroupTitle(chatID int64, title string) error {
+	if title == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE monitored_groups SET title = ? WHERE chat_id = ? AND (title IS NULL OR title = '' OR title != ?)", title, chatID, title)
+	return err
 }
 
 func (s *Store) GetMonitoredIDs() map[int64]struct{} {
@@ -506,10 +520,10 @@ func (s *Store) InsertLog(e logstream.Entry) error {
 		isNew = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO event_logs (timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO event_logs (timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Timestamp.UTC().Format(time.RFC3339Nano),
-		e.Level, e.Category, e.ChatID, e.UserID, e.Username,
+		e.Level, e.Category, e.Source, e.ChatID, e.UserID, e.Username,
 		isNew, e.MutualGroups, e.Message, e.Raw,
 	)
 	return err
@@ -520,7 +534,7 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -532,7 +546,7 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 		var e logstream.Entry
 		var ts string
 		var isNew int
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.ChatID, &e.UserID, &e.Username,
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
@@ -565,7 +579,7 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 
 	cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, level, category, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs WHERE timestamp >= ? ORDER BY id ASC`, cutoff)
 	if err != nil {
 		return nil, err
@@ -577,7 +591,7 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 		var e logstream.Entry
 		var ts string
 		var isNew int
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.ChatID, &e.UserID, &e.Username,
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}

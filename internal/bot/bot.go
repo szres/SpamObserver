@@ -21,6 +21,7 @@ type Monitor struct {
 	bot        atomic.Pointer[telego.Bot]
 	verifyBots func() map[int64]struct{}
 	aiConfig   func() *ai.Config
+	updateTitle func(chatID int64, title string)
 }
 
 func New(
@@ -30,14 +31,16 @@ func New(
 	t *tracker.Tracker,
 	verifyBots func() map[int64]struct{},
 	aiConfig func() *ai.Config,
+	updateTitle func(chatID int64, title string),
 ) *Monitor {
 	return &Monitor{
-		broker:     broker,
-		monitored:  monitored,
-		enabled:    enabled,
-		tracker:    t,
-		verifyBots: verifyBots,
-		aiConfig:   aiConfig,
+		broker:      broker,
+		monitored:   monitored,
+		enabled:     enabled,
+		tracker:     t,
+		verifyBots:  verifyBots,
+		aiConfig:    aiConfig,
+		updateTitle: updateTitle,
 	}
 }
 
@@ -50,7 +53,13 @@ func (m *Monitor) ProcessUpdate(update telego.Update) {
 		return
 	}
 	if update.Message != nil {
-		m.processMessage(update.Message)
+		m.processMessage(update.Message, "message")
+	}
+	if update.BusinessMessage != nil {
+		m.processMessage(update.BusinessMessage, "business")
+	}
+	if update.GuestMessage != nil {
+		m.processMessage(update.GuestMessage, "guest")
 	}
 	if update.ChatMember != nil {
 		m.processChatMemberUpdate(update.ChatMember)
@@ -169,10 +178,14 @@ func (m *Monitor) assessUserSpam(userID, chatID int64, displayName, username, bi
 	})
 }
 
-func (m *Monitor) processMessage(msg *telego.Message) {
+func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	chatID := msg.Chat.ID
 	if !m.isMonitored(chatID) {
 		return
+	}
+
+	if m.updateTitle != nil && msg.Chat.Title != "" {
+		m.updateTitle(chatID, msg.Chat.Title)
 	}
 
 	if len(msg.NewChatMembers) > 0 {
@@ -191,6 +204,7 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 					Timestamp: time.Unix(int64(msg.Date), 0),
 					Level:     "INFO",
 					Category:  "JOIN",
+					Source:    source,
 					ChatID:    chatID,
 					UserID:    member.ID,
 					Username:  member.Username,
@@ -203,6 +217,7 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 					Timestamp: time.Unix(int64(msg.Date), 0),
 					Level:     "WARN",
 					Category:  "BOT_JOIN",
+					Source:    source,
 					ChatID:    chatID,
 					UserID:    member.ID,
 					Username:  member.Username,
@@ -218,6 +233,7 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 			Timestamp: time.Unix(int64(msg.Date), 0),
 			Level:     "INFO",
 			Category:  "LEAVE",
+			Source:    source,
 			ChatID:    chatID,
 			UserID:    member.ID,
 			Username:  member.Username,
@@ -285,6 +301,7 @@ func (m *Monitor) processMessage(msg *telego.Message) {
 		Timestamp:    time.Unix(int64(msg.Date), 0),
 		Level:        level,
 		Category:     category,
+		Source:       source,
 		ChatID:       chatID,
 		UserID:       msg.From.ID,
 		Username:     msg.From.Username,
@@ -444,6 +461,10 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 	chatID := update.Chat.ID
 	if !m.isMonitored(chatID) {
 		return
+	}
+
+	if m.updateTitle != nil && update.Chat.Title != "" {
+		m.updateTitle(chatID, update.Chat.Title)
 	}
 
 	newMember := update.NewChatMember

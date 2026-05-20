@@ -110,7 +110,9 @@ func main() {
 		}
 		return &ai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
 	}
-	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn)
+	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn, func(chatID int64, title string) {
+		_ = store.UpdateGroupTitle(chatID, title)
+	})
 
 	var (
 		botMu     sync.Mutex
@@ -161,7 +163,7 @@ func main() {
 				if err := telegoBot.SetWebhook(botCtx, &telego.SetWebhookParams{
 					URL:            publicURL + webhookPath,
 					SecretToken:    webhookSecret,
-					AllowedUpdates: []string{"message", "chat_member", "my_chat_member", "callback_query"},
+					AllowedUpdates: []string{"message", "business_message", "guest_message", "chat_member", "my_chat_member", "callback_query"},
 				}); err != nil {
 					broker.Publish(logstream.Error("SYSTEM", "Failed to set webhook: %v", err))
 				} else {
