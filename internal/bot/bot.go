@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,19 +109,15 @@ func (m *Monitor) isNewUser(userID int64) bool {
 }
 
 func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio string) {
-	log.Printf("[FLOOD_DEBUG] markNewUser called: userID=%d chatID=%d name=%q username=%q", userID, chatID, displayName, username)
-
 	if bio == "" {
 		bio = m.fetchUserBio(userID)
 	}
 
 	isNew := m.tracker.TryMarkNew(userID, chatID, displayName, username, bio)
 	if !isNew {
-		log.Printf("[FLOOD_DEBUG] markNewUser TryMarkNew=false (already tracked): userID=%d chatID=%d", userID, chatID)
 		return
 	}
 
-	log.Printf("[FLOOD_DEBUG] markNewUser TryMarkNew=true, calling recordJoin: userID=%d chatID=%d", userID, chatID)
 	m.recordJoin(chatID)
 
 	bioDisplay := bio
@@ -303,8 +298,6 @@ func (m *Monitor) recordJoin(chatID int64) {
 	}
 	m.floodJoins[chatID] = recent
 
-	log.Printf("[FLOOD_DEBUG] recordJoin chatID=%d recentJoins=%d floodActive=%v", chatID, len(recent), m.floodActive[chatID])
-
 	if !m.floodActive[chatID] && len(recent) >= 3 {
 		m.floodActive[chatID] = true
 		m.broker.Publish(logstream.Entry{
@@ -333,17 +326,20 @@ func (m *Monitor) startFloodCleanup() {
 		now := time.Now()
 		for chatID, lastJoin := range m.floodLastJoin {
 			if now.Sub(lastJoin) > 1*time.Minute {
+				wasActive := m.floodActive[chatID]
 				delete(m.floodJoins, chatID)
 				delete(m.floodActive, chatID)
 				delete(m.floodLastJoin, chatID)
-				m.broker.Publish(logstream.Entry{
-					Timestamp: now,
-					Level:     "INFO",
-					Category:  "FLOOD_END",
-					ChatID:    chatID,
-					Tags:      []string{"FLOOD"},
-					Message:   fmt.Sprintf("Flood mode ended for chat %d: no joins for 1 minute", chatID),
-				})
+				if wasActive {
+					m.broker.Publish(logstream.Entry{
+						Timestamp: now,
+						Level:     "INFO",
+						Category:  "FLOOD_END",
+						ChatID:    chatID,
+						Tags:      []string{"FLOOD"},
+						Message:   fmt.Sprintf("Flood mode ended for chat %d: no joins for 1 minute", chatID),
+					})
+				}
 			}
 		}
 		m.floodMu.Unlock()
@@ -408,7 +404,6 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 
 			if !member.IsBot {
 				bio := m.fetchUserBio(member.ID)
-				log.Printf("[FLOOD_DEBUG] processMessage→markNewUser: userID=%d chatID=%d source=%s", member.ID, chatID, source)
 				m.markNewUser(member.ID, chatID, displayName, member.Username, bio)
 
 				bioDisplay := bio
@@ -737,11 +732,9 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 
 	switch {
 	case status == telego.MemberStatusMember && update.From.ID == targetUser.ID:
-		log.Printf("[FLOOD_DEBUG] processChatMemberUpdate→markNewUser (self-join): userID=%d chatID=%d fromID=%d", targetUser.ID, chatID, update.From.ID)
 		m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 	case status == telego.MemberStatusRestricted && update.From.IsBot:
 		if r, ok := newMember.(*telego.ChatMemberRestricted); ok && !r.CanSendMessages {
-			log.Printf("[FLOOD_DEBUG] processChatMemberUpdate→markNewUser (bot-restricted): userID=%d chatID=%d fromID=%d", targetUser.ID, chatID, update.From.ID)
 			m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 		}
 	}
