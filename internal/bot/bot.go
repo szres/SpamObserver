@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,15 +110,19 @@ func (m *Monitor) isNewUser(userID int64) bool {
 }
 
 func (m *Monitor) markNewUser(userID, chatID int64, displayName, username, bio string) {
+	log.Printf("[FLOOD_DEBUG] markNewUser called: userID=%d chatID=%d name=%q username=%q", userID, chatID, displayName, username)
+
 	if bio == "" {
 		bio = m.fetchUserBio(userID)
 	}
 
 	isNew := m.tracker.TryMarkNew(userID, chatID, displayName, username, bio)
 	if !isNew {
+		log.Printf("[FLOOD_DEBUG] markNewUser TryMarkNew=false (already tracked): userID=%d chatID=%d", userID, chatID)
 		return
 	}
 
+	log.Printf("[FLOOD_DEBUG] markNewUser TryMarkNew=true, calling recordJoin: userID=%d chatID=%d", userID, chatID)
 	m.recordJoin(chatID)
 
 	bioDisplay := bio
@@ -298,6 +303,8 @@ func (m *Monitor) recordJoin(chatID int64) {
 	}
 	m.floodJoins[chatID] = recent
 
+	log.Printf("[FLOOD_DEBUG] recordJoin chatID=%d recentJoins=%d floodActive=%v", chatID, len(recent), m.floodActive[chatID])
+
 	if !m.floodActive[chatID] && len(recent) >= 3 {
 		m.floodActive[chatID] = true
 		m.broker.Publish(logstream.Entry{
@@ -401,6 +408,7 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 
 			if !member.IsBot {
 				bio := m.fetchUserBio(member.ID)
+				log.Printf("[FLOOD_DEBUG] processMessage→markNewUser: userID=%d chatID=%d source=%s", member.ID, chatID, source)
 				m.markNewUser(member.ID, chatID, displayName, member.Username, bio)
 
 				bioDisplay := bio
@@ -459,8 +467,8 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	isVerifyBot := isBot && m.isVerifyBot(msg.From.ID)
 	isNew := !isBot && m.isNewUser(msg.From.ID)
 
-	if !isNew {
-		entityTags = filterTag(entityTags, "HASHTAG")
+	if !isBot && !isNew {
+		entityTags = nil
 	}
 	hasEntities := len(entityTags) > 0
 	hasQuote := quoteInfo != ""
@@ -729,9 +737,11 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 
 	switch {
 	case status == telego.MemberStatusMember && update.From.ID == targetUser.ID:
+		log.Printf("[FLOOD_DEBUG] processChatMemberUpdate→markNewUser (self-join): userID=%d chatID=%d fromID=%d", targetUser.ID, chatID, update.From.ID)
 		m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 	case status == telego.MemberStatusRestricted && update.From.IsBot:
 		if r, ok := newMember.(*telego.ChatMemberRestricted); ok && !r.CanSendMessages {
+			log.Printf("[FLOOD_DEBUG] processChatMemberUpdate→markNewUser (bot-restricted): userID=%d chatID=%d fromID=%d", targetUser.ID, chatID, update.From.ID)
 			m.markNewUser(targetUser.ID, chatID, memberDisplayName(targetUser), targetUser.Username, "")
 		}
 	}
@@ -828,12 +838,4 @@ func truncate(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-func filterTag(tags []string, exclude string) []string {
-	var result []string
-	for _, t := range tags {
-		if t != exclude {
-			result = append(result, t)
-		}
-	}
-	return result
-}
+
