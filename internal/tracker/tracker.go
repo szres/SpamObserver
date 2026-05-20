@@ -102,6 +102,39 @@ func (t *Tracker) MarkNew(userID, chatID int64, displayName, username, bio strin
 	}
 }
 
+func (t *Tracker) TryMarkNew(userID, chatID int64, displayName, username, bio string) bool {
+	now := time.Now()
+	t.mu.Lock()
+	existing, ok := t.users[userID]
+	if ok && now.Sub(existing.JoinedAt) <= 24*time.Hour {
+		if bio != "" && existing.Bio == "" {
+			existing.Bio = bio
+		}
+		if displayName != "" {
+			existing.DisplayName = displayName
+		}
+		if username != "" {
+			existing.Username = username
+		}
+		t.mu.Unlock()
+		return false
+	}
+	t.users[userID] = &UserInfo{
+		UserID:      userID,
+		ChatID:      chatID,
+		DisplayName: displayName,
+		Username:    username,
+		Bio:         bio,
+		JoinedAt:    now,
+	}
+	t.mu.Unlock()
+
+	if err := t.store.AddNewUser(userID, chatID, displayName, username, bio); err != nil {
+		log.Printf("tracker: failed to persist new user %d: %v", userID, err)
+	}
+	return true
+}
+
 func (t *Tracker) IsNew(userID int64) bool {
 	t.mu.RLock()
 	info, ok := t.users[userID]

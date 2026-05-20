@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -24,6 +25,7 @@ type AdminSettings struct {
 
 type MonitoredGroup struct {
 	ChatID  int64     `json:"chat_id"`
+	Title   string    `json:"title"`
 	AddedAt time.Time `json:"added_at"`
 }
 
@@ -94,6 +96,10 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE monitored_groups ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN warn_in_group INTEGER NOT NULL DEFAULT 0")
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS new_users (
@@ -226,6 +232,30 @@ func (s *Store) SetBotEnabled(enabled bool) error {
 	return err
 }
 
+func (s *Store) GetWarnInGroup() (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var enabled int
+	err := s.db.QueryRow("SELECT warn_in_group FROM admin_settings WHERE id = 1").Scan(&enabled)
+	if err != nil {
+		return false, err
+	}
+	return enabled == 1, nil
+}
+
+func (s *Store) SetWarnInGroup(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.db.Exec("UPDATE admin_settings SET warn_in_group = ? WHERE id = 1", v)
+	return err
+}
+
 func (s *Store) GetBotToken() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -290,7 +320,7 @@ func (s *Store) ListGroups() ([]MonitoredGroup, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT chat_id, added_at FROM monitored_groups ORDER BY added_at DESC")
+	rows, err := s.db.Query("SELECT chat_id, title, added_at FROM monitored_groups ORDER BY added_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +329,7 @@ func (s *Store) ListGroups() ([]MonitoredGroup, error) {
 	var groups []MonitoredGroup
 	for rows.Next() {
 		var g MonitoredGroup
-		if err := rows.Scan(&g.ChatID, &g.AddedAt); err != nil {
+		if err := rows.Scan(&g.ChatID, &g.Title, &g.AddedAt); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)
@@ -314,6 +344,17 @@ func (s *Store) IsMonitored(chatID int64) bool {
 	var count int
 	_ = s.db.QueryRow("SELECT COUNT(*) FROM monitored_groups WHERE chat_id = ?", chatID).Scan(&count)
 	return count > 0
+}
+
+func (s *Store) UpdateGroupTitle(chatID int64, title string) error {
+	if title == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE monitored_groups SET title = ? WHERE chat_id = ? AND (title IS NULL OR title = '' OR title != ?)", title, chatID, title)
+	return err
 }
 
 func (s *Store) GetMonitoredIDs() map[int64]struct{} {
@@ -505,11 +546,17 @@ func (s *Store) InsertLog(e logstream.Entry) error {
 	if e.IsNew {
 		isNew = 1
 	}
+	tagsJSON := "[]"
+	if len(e.Tags) > 0 {
+		if b, err := json.Marshal(e.Tags); err == nil {
+			tagsJSON = string(b)
+		}
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO event_logs (timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO event_logs (timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Timestamp.UTC().Format(time.RFC3339Nano),
-		e.Level, e.Category, e.ChatID, e.UserID, e.Username,
+		e.Level, e.Category, tagsJSON, e.Source, e.ChatID, e.UserID, e.Username,
 		isNew, e.MutualGroups, e.Message, e.Raw,
 	)
 	return err
@@ -520,7 +567,7 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -532,12 +579,14 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 		var e logstream.Entry
 		var ts string
 		var isNew int
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &e.ChatID, &e.UserID, &e.Username,
+		var tagsJSON string
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
 		e.IsNew = isNew == 1
+		e.Tags = parseTags(tagsJSON)
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -559,6 +608,54 @@ func (s *Store) PurgeOldLogs(olderThan time.Duration) error {
 	return err
 }
 
+func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.Query(
+		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		 FROM event_logs WHERE timestamp >= ? ORDER BY id ASC`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []logstream.Entry
+	for rows.Next() {
+		var e logstream.Entry
+		var ts string
+		var isNew int
+		var tagsJSON string
+		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
+			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		e.IsNew = isNew == 1
+		e.Tags = parseTags(tagsJSON)
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func parseTags(tagsJSON string) []string {
+	if tagsJSON == "" || tagsJSON == "[]" {
+		return nil
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+		return nil
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
+}
+
 func (s *Store) GetBannedCount24h() (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -567,7 +664,7 @@ func (s *Store) GetBannedCount24h() (int, error) {
 	var count int
 	err := s.db.QueryRow(
 		`SELECT COUNT(DISTINCT user_id) FROM event_logs
-		 WHERE category IN ('BAN', 'VERIFY_BAN') AND timestamp >= ?`, cutoff).Scan(&count)
+		 WHERE category = 'BAN' AND timestamp >= ?`, cutoff).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

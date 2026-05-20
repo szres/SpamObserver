@@ -90,6 +90,13 @@ func main() {
 		botEnabled.Store(true)
 	}
 
+	warnInGroup := new(atomic.Bool)
+	if wig, err := store.GetWarnInGroup(); err == nil {
+		warnInGroup.Store(wig)
+	} else {
+		warnInGroup.Store(false)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:           "SpamObserver",
 		BodyLimit:         1 * 1024 * 1024,
@@ -110,7 +117,9 @@ func main() {
 		}
 		return &ai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
 	}
-	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn)
+	monitor := bot.New(broker, store.GetMonitoredIDs, botEnabled.Load, trk, store.GetVerificationBotIDs, aiConfigFn, func(chatID int64, title string) {
+		_ = store.UpdateGroupTitle(chatID, title)
+	}, warnInGroup.Load)
 
 	var (
 		botMu     sync.Mutex
@@ -161,7 +170,7 @@ func main() {
 				if err := telegoBot.SetWebhook(botCtx, &telego.SetWebhookParams{
 					URL:            publicURL + webhookPath,
 					SecretToken:    webhookSecret,
-					AllowedUpdates: []string{"message", "chat_member", "my_chat_member", "callback_query"},
+					AllowedUpdates: []string{"message", "business_message", "guest_message", "chat_member", "my_chat_member", "callback_query"},
 				}); err != nil {
 					broker.Publish(logstream.Error("SYSTEM", "Failed to set webhook: %v", err))
 				} else {
@@ -194,7 +203,7 @@ func main() {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	h := handler.New(store, broker, jwt, botEnabled, startBot, trk)
+	h := handler.New(store, broker, jwt, botEnabled, startBot, trk, warnInGroup)
 	h.Register(app)
 
 	broker.Publish(logstream.Info("SYSTEM", "SpamObserver starting on port %s", port))

@@ -52,7 +52,7 @@
         <template x-if="authenticated">
           <div class="flex items-center gap-3">
             <span class="text-sm text-gray-400" x-text="currentUser"></span>
-            <button @click="showSettings = true; loadBotTokenInfo(); loadVerifyBots(); loadAIConfig()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
+            <button @click="showSettings = true; loadBotTokenInfo(); loadVerifyBots(); loadAIConfig(); loadWarnInGroup()" class="text-gray-500 hover:text-gray-300 transition" title="Settings">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
               </svg>
@@ -91,10 +91,64 @@
       </div>
     </div>
 
+    <!-- Public Filter Bar -->
+    <div class="bg-dark-800 border border-dark-600 rounded-lg p-4 mb-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Group Filter -->
+        <select x-model="selectedGroup"
+          class="bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500">
+          <option value="all">All Groups</option>
+          <template x-for="g in publicGroups" :key="g.chat_id">
+            <option :value="g.chat_id" x-text="g.title || 'Group ' + g.chat_id"></option>
+          </template>
+        </select>
+
+        <div class="h-5 w-px bg-dark-600"></div>
+
+        <!-- Source Filter -->
+        <div class="flex items-center gap-1.5">
+          <button @click="activeSource = ''"
+            :class="activeSource === '' ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+            class="text-xs px-2 py-1 rounded transition font-medium">ALL</button>
+          <button @click="activeSource = 'message'"
+            :class="activeSource === 'message' ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+            class="text-xs px-2 py-1 rounded transition font-medium">MSG</button>
+          <button @click="activeSource = 'business'"
+            :class="activeSource === 'business' ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+            class="text-xs px-2 py-1 rounded transition font-medium">BIZ</button>
+          <button @click="activeSource = 'guest'"
+            :class="activeSource === 'guest' ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+            class="text-xs px-2 py-1 rounded transition font-medium">GUEST</button>
+        </div>
+
+        <div class="h-5 w-px bg-dark-600"></div>
+
+        <!-- NEW Users Toggle -->
+        <button @click="filterNewOnly = !filterNewOnly"
+          :class="filterNewOnly ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+          class="text-xs px-2 py-1 rounded transition font-medium">NEW Only</button>
+
+        <div class="h-5 w-px bg-dark-600"></div>
+
+        <!-- Category Filters -->
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="cat in (authenticated ? availableCategories.concat(adminCategories) : availableCategories)" :key="cat">
+            <button @click="toggleFilter(cat)"
+              :class="activeFilters.includes(cat) ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
+              class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
+          </template>
+        </div>
+
+        <div x-show="activeFilters.length > 0 || filterNewOnly || activeSource || selectedGroup !== 'all'" class="ml-auto">
+          <button @click="activeFilters = []; filterNewOnly = false; activeSource = ''; selectedGroup = 'all'" class="text-xs text-gray-500 hover:text-white transition">Clear all</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Grid -->
     <div class="grid gap-6" :class="authenticated ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1'">
       
-      <!-- Left: Groups + Filters (only when authenticated) -->
+      <!-- Left: Groups Management (only when authenticated) -->
       <div x-show="authenticated" x-transition class="lg:col-span-1">
         <div class="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden">
           <div class="px-4 py-3 border-b border-dark-600 flex items-center justify-between">
@@ -120,7 +174,8 @@
             <template x-for="g in groups" :key="g.chat_id">
               <div class="px-4 py-3 flex items-center justify-between hover:bg-dark-700 transition">
                 <div>
-                  <div class="text-sm font-mono text-white" x-text="g.chat_id"></div>
+                  <div class="text-sm font-mono text-white" x-text="g.title || g.chat_id"></div>
+                  <div class="text-xs text-gray-500" x-text="g.title ? 'ID: ' + g.chat_id : ''"></div>
                   <div class="text-xs text-gray-500" x-text="'Added: ' + new Date(g.added_at).toLocaleDateString()"></div>
                 </div>
                 <button @click="removeGroup(g.chat_id)" 
@@ -129,30 +184,6 @@
                 </button>
               </div>
             </template>
-          </div>
-        </div>
-
-        <!-- Quick Filters -->
-        <div class="bg-dark-800 border border-dark-600 rounded-lg mt-4 overflow-hidden">
-          <div class="px-4 py-3 border-b border-dark-600">
-            <h2 class="font-semibold text-white">Filters</h2>
-          </div>
-          <div class="p-4 space-y-2">
-            <div class="flex items-center gap-2 pb-2 border-b border-dark-600">
-              <button @click="filterNewOnly = !filterNewOnly"
-                :class="filterNewOnly ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
-                class="text-xs px-2 py-1 rounded transition font-medium">NEW Users Only</button>
-            </div>
-            <div class="flex flex-wrap gap-1.5">
-              <template x-for="cat in (authenticated ? availableCategories.concat(adminCategories) : availableCategories)" :key="cat">
-                <button @click="toggleFilter(cat)"
-                  :class="activeFilters.includes(cat) ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'"
-                  class="text-xs px-2 py-1 rounded transition" x-text="cat"></button>
-              </template>
-            </div>
-            <div x-show="activeFilters.length > 0 || filterNewOnly" class="pt-2">
-              <button @click="activeFilters = []; filterNewOnly = false" class="text-xs text-gray-500 hover:text-white transition">Clear filters</button>
-            </div>
           </div>
         </div>
       </div>
@@ -197,12 +228,18 @@
                       'bg-red-600 text-red-100': log.level === 'ERROR'
                     }" x-text="log.level"></span>
                   <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-cyan-800 text-cyan-200" x-text="log.category"></span>
+                  <span x-show="log.source === 'business'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-700 text-blue-200">BIZ</span>
+                  <span x-show="log.source === 'guest'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-700 text-orange-200">GUEST</span>
                   <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
                   <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
+                  <span x-show="log.tags && log.tags.includes('BOT_OP')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-600 text-amber-100">BOT_OP</span>
                   <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
                 </div>
                 <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
-                <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono" x-text="'chat: ' + log.chat_id"></div>
+                <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono">
+                  <span x-text="'chat: ' + log.chat_id"></span>
+                  <span x-show="groupTitle(log.chat_id)" class="text-gray-400" x-text="' (' + groupTitle(log.chat_id) + ')'"></span>
+                </div>
               </div>
             </template>
           </div>
@@ -292,6 +329,23 @@
               :class="botEnabled ? 'bg-green-600' : 'bg-dark-600'"
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none">
               <span :class="botEnabled ? 'translate-x-6' : 'translate-x-1'"
+                class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Group Warning Messages -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">Group Warning Messages</h3>
+          <div class="flex items-center justify-between bg-dark-700 rounded-lg p-4">
+            <div>
+              <div class="text-sm text-white font-medium" x-text="warnInGroup ? 'Warnings Enabled' : 'Warnings Disabled'"></div>
+              <div class="text-xs text-gray-500 mt-0.5">Send warning message in group when high-risk/spam user detected</div>
+            </div>
+            <button @click="toggleWarnInGroup()"
+              :class="warnInGroup ? 'bg-green-600' : 'bg-dark-600'"
+              class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none">
+              <span :class="warnInGroup ? 'translate-x-6' : 'translate-x-1'"
                 class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"></span>
             </button>
           </div>
@@ -448,12 +502,17 @@
         filterNewOnly: false,
         botEnabled: true,
         botReady: false,
+        warnInGroup: false,
+        selectedGroup: 'all',
+        activeSource: '',
+        publicGroups: [],
         availableCategories: [
           'JOIN', 'BOT_JOIN', 'LEAVE', 'RESTRICT', 'BAN', 'REMOVE',
           'BOT_MSG', 'BUTTON', 'URL_ENTITY',
           'TEXT_LINK', 'MENTION', 'BOT_COMMAND',
-          'VERIFY_BOT_MSG', 'VERIFY_BUTTON', 'VERIFY_BAN', 'VERIFY_RESTRICT',
-          'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS'
+          'BOT_OP',
+          'QUOTE', 'NEW_MSG', 'NEW_USER', 'AI_ASSESS', 'SPAM_CONFIRMED', 'SPAM_HIGH_RISK', 'SPAM_WARNING',
+          'FLOOD_ALERT', 'FLOOD_END'
         ],
         adminCategories: ['SYSTEM', 'CONFIG'],
         
@@ -485,10 +544,12 @@
           this.fetchBotInfo();
           this.fetchNewUserCount();
           this.fetchBannedCount();
+          this.fetchPublicGroups();
           this.restoreSession();
           setInterval(() => {
             this.fetchNewUserCount();
             this.fetchBannedCount();
+            this.fetchPublicGroups();
             if (this.authenticated) {
               this.loadNewUsers();
             }
@@ -619,6 +680,31 @@
             if (r.ok) {
               const d = await r.json();
               this.botEnabled = d.enabled;
+            }
+          } catch (e) {}
+        },
+
+        async loadWarnInGroup() {
+          try {
+            const r = await fetch('/api/config/bot/warn-in-group', { headers: this.authHeaders() });
+            if (r.ok) {
+              const d = await r.json();
+              this.warnInGroup = d.warn_in_group;
+            }
+          } catch (e) {}
+        },
+
+        async toggleWarnInGroup() {
+          const newState = !this.warnInGroup;
+          try {
+            const r = await fetch('/api/config/bot/warn-in-group', {
+              method: 'POST',
+              headers: this.authHeaders(),
+              body: JSON.stringify({ warn_in_group: newState })
+            });
+            if (r.ok) {
+              const d = await r.json();
+              this.warnInGroup = d.warn_in_group;
             }
           } catch (e) {}
         },
@@ -861,6 +947,22 @@
           } catch (e) {}
         },
 
+        async fetchPublicGroups() {
+          try {
+            const r = await fetch('/api/groups');
+            if (r.ok) {
+              this.publicGroups = await r.json() || [];
+            }
+          } catch (e) {}
+        },
+
+        groupTitle(chatId) {
+          if (!chatId) return '';
+          const g = this.publicGroups.find(g => g.chat_id === chatId);
+          if (g && g.title) return g.title;
+          return '';
+        },
+
         resetSettings() {
           this.settingsError = '';
           this.settingsSuccess = '';
@@ -931,11 +1033,21 @@
           if (!this.authenticated) {
             result = result.filter(l => !this.adminCategories.includes(l.category));
           }
+          if (this.selectedGroup !== 'all') {
+            const gid = parseInt(this.selectedGroup);
+            result = result.filter(l => l.chat_id === gid);
+          }
+          if (this.activeSource) {
+            result = result.filter(l => (l.source || 'message') === this.activeSource);
+          }
           if (this.filterNewOnly) {
             result = result.filter(l => l.is_new);
           }
           if (this.activeFilters.length > 0) {
-            result = result.filter(l => this.activeFilters.includes(l.category));
+            result = result.filter(l =>
+              this.activeFilters.includes(l.category) ||
+              (l.tags && l.tags.some(t => this.activeFilters.includes(t)))
+            );
           }
           if (this.searchQuery.trim()) {
             const q = this.searchQuery.toLowerCase();
