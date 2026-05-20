@@ -20,10 +20,11 @@
   </script>
   <style>
     [x-cloak] { display: none !important; }
-    .log-card { font-size: 13px; line-height: 1.5; border-left: 3px solid transparent; }
-    .log-card-level-info { border-left-color: #3b82f6; }
-    .log-card-level-warn { border-left-color: #eab308; }
-    .log-card-level-error { border-left-color: #ef4444; }
+    .log-card { font-size: 13px; line-height: 1.5; display: flex; }
+    .log-card-bar { width: 3px; border-radius: 2px; flex-shrink: 0; background-color: #30363d; }
+    .log-card-bar-info { background-color: #3b82f6; }
+    .log-card-bar-warn { background-color: #eab308; }
+    .log-card-bar-error { background-color: #ef4444; }
     .log-terminal { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
     .log-terminal::-webkit-scrollbar { width: 6px; }
     .log-terminal::-webkit-scrollbar-track { background: #0d1117; }
@@ -214,31 +215,34 @@
               <div class="text-center text-gray-600 text-sm py-8">Waiting for events...</div>
             </template>
             <template x-for="(log, idx) in filteredLogs" :key="idx">
-              <div class="log-card bg-dark-700 rounded-lg p-3 mb-2 hover:bg-dark-600 transition"
-                :class="{
-                  'log-card-level-info': log.level === 'INFO',
-                  'log-card-level-warn': log.level === 'WARN',
-                  'log-card-level-error': log.level === 'ERROR'
-                }">
-                <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-                  <span class="text-xs font-bold px-1.5 py-0.5 rounded"
-                    :class="{
-                      'bg-blue-600 text-blue-100': log.level === 'INFO',
-                      'bg-yellow-600 text-yellow-100': log.level === 'WARN',
-                      'bg-red-600 text-red-100': log.level === 'ERROR'
-                    }" x-text="log.level"></span>
-                  <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-cyan-800 text-cyan-200" x-text="log.category"></span>
-                  <span x-show="log.source === 'business'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-700 text-blue-200">BIZ</span>
-                  <span x-show="log.source === 'guest'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-700 text-orange-200">GUEST</span>
-                  <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
-                  <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
-                  <span x-show="log.tags && log.tags.includes('BOT_OP')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-600 text-amber-100">BOT_OP</span>
-                  <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
-                </div>
-                <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
-                <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono">
-                  <span x-text="'chat: ' + log.chat_id"></span>
-                  <span x-show="groupTitle(log.chat_id)" class="text-gray-400" x-text="' (' + groupTitle(log.chat_id) + ')'"></span>
+              <div class="log-card mb-2">
+                <div class="log-card-bar mr-2"
+                  :class="{
+                    'log-card-bar-info': log.level === 'INFO',
+                    'log-card-bar-warn': log.level === 'WARN',
+                    'log-card-bar-error': log.level === 'ERROR'
+                  }"></div>
+                <div class="flex-1 min-w-0 bg-dark-700 rounded-lg p-3 hover:bg-dark-600 transition">
+                  <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <span class="text-xs font-bold px-1.5 py-0.5 rounded"
+                      :class="{
+                        'bg-blue-600 text-blue-100': log.level === 'INFO',
+                        'bg-yellow-600 text-yellow-100': log.level === 'WARN',
+                        'bg-red-600 text-red-100': log.level === 'ERROR'
+                      }" x-text="log.level"></span>
+                    <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-cyan-800 text-cyan-200" x-text="log.category"></span>
+                    <span x-show="log.source === 'business'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-700 text-blue-200">BIZ</span>
+                    <span x-show="log.source === 'guest'" class="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-700 text-orange-200">GUEST</span>
+                    <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
+                    <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
+                    <span x-show="log.tags && log.tags.includes('BOT_OP')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-600 text-amber-100">BOT_OP</span>
+                    <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
+                  </div>
+                  <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
+                  <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono">
+                    <span x-text="'chat: ' + log.chat_id"></span>
+                    <span x-show="groupTitle(log.chat_id)" class="text-gray-400" x-text="' (' + groupTitle(log.chat_id) + ')'"></span>
+                  </div>
                 </div>
               </div>
             </template>
