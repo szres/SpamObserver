@@ -12,19 +12,20 @@ const (
 )
 
 type Entry struct {
-	Timestamp    time.Time `json:"timestamp"`
-	Level        string    `json:"level"`
-	Category     string    `json:"category"`
-	Tags         []string  `json:"tags,omitempty"`
-	Source       string    `json:"source,omitempty"`
-	ChatID       int64     `json:"chat_id,omitempty"`
-	ChatName     string    `json:"chat_name,omitempty"`
-	UserID       int64     `json:"user_id,omitempty"`
-	Username     string    `json:"username,omitempty"`
-	IsNew        bool      `json:"is_new,omitempty"`
-	MutualGroups int       `json:"mutual_groups,omitempty"`
-	Message      string    `json:"message"`
-	Raw          string    `json:"raw,omitempty"`
+	Timestamp     time.Time  `json:"timestamp"`
+	TelegramDate  *time.Time `json:"telegram_date,omitempty"`
+	Level         string     `json:"level"`
+	Category      string     `json:"category"`
+	Tags          []string   `json:"tags,omitempty"`
+	Source        string     `json:"source,omitempty"`
+	ChatID        int64      `json:"chat_id,omitempty"`
+	ChatName      string     `json:"chat_name,omitempty"`
+	UserID        int64      `json:"user_id,omitempty"`
+	Username      string     `json:"username,omitempty"`
+	IsNew         bool       `json:"is_new,omitempty"`
+	MutualGroups  int        `json:"mutual_groups,omitempty"`
+	Message       string     `json:"message"`
+	Raw           string     `json:"raw,omitempty"`
 }
 
 type Broker struct {

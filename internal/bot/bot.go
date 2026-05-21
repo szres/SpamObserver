@@ -410,28 +410,32 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 				if bioDisplay == "" {
 					bioDisplay = "(none)"
 				}
+				tgDate := time.Unix(int64(msg.Date), 0)
 				m.broker.Publish(logstream.Entry{
-					Timestamp: time.Unix(int64(msg.Date), 0),
-					Level:     "INFO",
-					Category:  "JOIN",
-					Source:    source,
-					ChatID:    chatID,
-					UserID:    member.ID,
-					Username:  member.Username,
-					IsNew:     true,
+					Timestamp:    time.Now(),
+					TelegramDate: &tgDate,
+					Level:        "INFO",
+					Category:     "JOIN",
+					Source:       source,
+					ChatID:       chatID,
+					UserID:       member.ID,
+					Username:     member.Username,
+					IsNew:        true,
 					Message: fmt.Sprintf("New member joined: %s (@%s, Bio: %s)",
 						userRef(member.ID, displayName), member.Username, bioDisplay),
 				})
 			} else {
+				tgDate := time.Unix(int64(msg.Date), 0)
 				m.broker.Publish(logstream.Entry{
-					Timestamp: time.Unix(int64(msg.Date), 0),
-					Level:     "WARN",
-					Category:  "BOT_JOIN",
-					Source:    source,
-					ChatID:    chatID,
-					UserID:    member.ID,
-					Username:  member.Username,
-					Message:   fmt.Sprintf("Bot added to group: %s", userRef(member.ID, "@"+member.Username)),
+					Timestamp:    time.Now(),
+					TelegramDate: &tgDate,
+					Level:        "WARN",
+					Category:     "BOT_JOIN",
+					Source:       source,
+					ChatID:       chatID,
+					UserID:       member.ID,
+					Username:     member.Username,
+					Message:      fmt.Sprintf("Bot added to group: %s", userRef(member.ID, "@"+member.Username)),
 				})
 			}
 		}
@@ -439,15 +443,17 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 
 	if msg.LeftChatMember != nil {
 		member := msg.LeftChatMember
+		tgDate := time.Unix(int64(msg.Date), 0)
 		m.broker.Publish(logstream.Entry{
-			Timestamp: time.Unix(int64(msg.Date), 0),
-			Level:     "INFO",
-			Category:  "LEAVE",
-			Source:    source,
-			ChatID:    chatID,
-			UserID:    member.ID,
-			Username:  member.Username,
-			Message:   fmt.Sprintf("Member left: %s", userRef(member.ID, memberDisplayName(*member))),
+			Timestamp:    time.Now(),
+			TelegramDate: &tgDate,
+			Level:        "INFO",
+			Category:     "LEAVE",
+			Source:       source,
+			ChatID:       chatID,
+			UserID:       member.ID,
+			Username:     member.Username,
+			Message:      fmt.Sprintf("Member left: %s", userRef(member.ID, memberDisplayName(*member))),
 		})
 	}
 
@@ -509,8 +515,10 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 		parts = append(parts, fmt.Sprintf("(MG:%d)", mutualCount))
 	}
 
+	tgDate := time.Unix(int64(msg.Date), 0)
 	m.broker.Publish(logstream.Entry{
-		Timestamp:    time.Unix(int64(msg.Date), 0),
+		Timestamp:    time.Now(),
+		TelegramDate: &tgDate,
 		Level:        level,
 		Category:     category,
 		Tags:         tags,
@@ -746,15 +754,17 @@ func (m *Monitor) processChatMemberUpdate(update *telego.ChatMemberUpdated) {
 		tags = []string{"BOT_OP"}
 	}
 
+	tgDate := time.Unix(int64(update.Date), 0)
 	m.broker.Publish(logstream.Entry{
-		Timestamp: time.Unix(int64(update.Date), 0),
-		Level:     level,
-		Category:  category,
-		Tags:      tags,
-		ChatID:    chatID,
-		UserID:    targetUser.ID,
-		Username:  targetUser.Username,
-		IsNew:     targetIsNew,
+		Timestamp:    time.Now(),
+		TelegramDate: &tgDate,
+		Level:        level,
+		Category:     category,
+		Tags:         tags,
+		ChatID:       chatID,
+		UserID:       targetUser.ID,
+		Username:     targetUser.Username,
+		IsNew:        targetIsNew,
 		Message: fmt.Sprintf("%s was %s by %s",
 			userRef(targetUser.ID, memberDisplayName(targetUser)), action, performedBy),
 	})
