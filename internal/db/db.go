@@ -100,6 +100,7 @@ func (s *Store) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
 	_, _ = s.db.Exec("ALTER TABLE admin_settings ADD COLUMN warn_in_group INTEGER NOT NULL DEFAULT 0")
+	_, _ = s.db.Exec("ALTER TABLE event_logs ADD COLUMN telegram_date DATETIME")
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS new_users (
@@ -552,10 +553,15 @@ func (s *Store) InsertLog(e logstream.Entry) error {
 			tagsJSON = string(b)
 		}
 	}
+	var tgDate interface{}
+	if e.TelegramDate != nil {
+		tgDate = e.TelegramDate.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO event_logs (timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO event_logs (timestamp, telegram_date, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Timestamp.UTC().Format(time.RFC3339Nano),
+		tgDate,
 		e.Level, e.Category, tagsJSON, e.Source, e.ChatID, e.UserID, e.Username,
 		isNew, e.MutualGroups, e.Message, e.Raw,
 	)
@@ -567,7 +573,7 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, telegram_date, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -578,13 +584,19 @@ func (s *Store) GetRecentLogs(limit int) ([]logstream.Entry, error) {
 	for rows.Next() {
 		var e logstream.Entry
 		var ts string
+		var tgDate sql.NullString
 		var isNew int
 		var tagsJSON string
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
+		if err := rows.Scan(&ts, &tgDate, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		if tgDate.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, tgDate.String); err == nil {
+				e.TelegramDate = &t
+			}
+		}
 		e.IsNew = isNew == 1
 		e.Tags = parseTags(tagsJSON)
 		entries = append(entries, e)
@@ -614,7 +626,7 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 
 	cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.Query(
-		`SELECT timestamp, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
+		`SELECT timestamp, telegram_date, level, category, tags, source, chat_id, user_id, username, is_new, mutual_groups, message, raw
 		 FROM event_logs WHERE timestamp >= ? ORDER BY id ASC`, cutoff)
 	if err != nil {
 		return nil, err
@@ -625,13 +637,19 @@ func (s *Store) GetRecentLogsByDuration(d time.Duration) ([]logstream.Entry, err
 	for rows.Next() {
 		var e logstream.Entry
 		var ts string
+		var tgDate sql.NullString
 		var isNew int
 		var tagsJSON string
-		if err := rows.Scan(&ts, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
+		if err := rows.Scan(&ts, &tgDate, &e.Level, &e.Category, &tagsJSON, &e.Source, &e.ChatID, &e.UserID, &e.Username,
 			&isNew, &e.MutualGroups, &e.Message, &e.Raw); err != nil {
 			return nil, err
 		}
 		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		if tgDate.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, tgDate.String); err == nil {
+				e.TelegramDate = &t
+			}
+		}
 		e.IsNew = isNew == 1
 		e.Tags = parseTags(tagsJSON)
 		entries = append(entries, e)

@@ -239,9 +239,12 @@
                     <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
                   </div>
                   <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
-                  <div x-show="log.chat_id" class="mt-1.5 text-xs text-gray-500 font-mono">
-                    <span x-text="'chat: ' + log.chat_id"></span>
-                    <span x-show="groupTitle(log.chat_id)" class="text-gray-400" x-text="' (' + groupTitle(log.chat_id) + ')'"></span>
+                  <div class="mt-1.5 flex items-center justify-between">
+                    <div x-show="log.chat_id" class="text-xs text-gray-500 font-mono">
+                      <span x-text="'chat: ' + log.chat_id"></span>
+                      <span x-show="groupTitle(log.chat_id)" class="text-gray-400" x-text="' (' + groupTitle(log.chat_id) + ')'"></span>
+                    </div>
+                    <span x-show="log.telegram_date" class="text-xs text-gray-600 font-mono" x-text="log.telegram_date ? 'tg: ' + formatTime(log.telegram_date) : ''"></span>
                   </div>
                 </div>
               </div>
