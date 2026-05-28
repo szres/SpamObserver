@@ -468,13 +468,19 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 	isVerifyBot := isBot && m.isVerifyBot(msg.From.ID)
 	isNew := !isBot && m.isNewUser(msg.From.ID)
 
+	mutualCount := 0
+	if !isBot {
+		mutualCount = m.countMutualGroups(msg.From.ID)
+	}
+	isZeroMutual := !isBot && mutualCount == 0
+
 	if !isBot && !isNew {
 		entityTags = nil
 	}
 	hasEntities := len(entityTags) > 0
 	hasQuote := quoteInfo != ""
 
-	if !isBot && !isNew && !hasEntities {
+	if !isBot && !isNew && !hasEntities && !isZeroMutual {
 		return
 	}
 
@@ -486,6 +492,9 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 		tags = []string{"BOT_OP"}
 	case isBot:
 		category, level = "BOT_MSG", "INFO"
+	case isZeroMutual:
+		category, level = "SPAM_CONFIRMED", "WARN"
+		tags = []string{"ZERO_MG"}
 	case isNew:
 		category, level = "NEW_MSG", "INFO"
 	case hasEntities:
@@ -509,9 +518,7 @@ func (m *Monitor) processMessage(msg *telego.Message, source string) {
 		parts = append(parts, quoteInfo)
 	}
 
-	mutualCount := 0
-	if isNew {
-		mutualCount = m.countMutualGroups(msg.From.ID)
+	if !isBot && (isNew || isZeroMutual) {
 		parts = append(parts, fmt.Sprintf("(MG:%d)", mutualCount))
 	}
 
