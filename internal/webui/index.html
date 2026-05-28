@@ -236,6 +236,7 @@
                     <span x-show="log.is_new" class="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">NEW</span>
                     <span x-show="log.mutual_groups > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-700 text-orange-200" x-text="'MG:' + log.mutual_groups"></span>
                     <span x-show="log.tags && log.tags.includes('BOT_OP')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-600 text-amber-100">BOT_OP</span>
+                    <span x-show="log.tags && log.tags.includes('ZERO_MG')" class="text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-red-100">ZERO_MG</span>
                     <span class="ml-auto text-xs text-gray-500 font-mono" x-text="formatTime(log.timestamp)"></span>
                   </div>
                   <div class="text-sm text-gray-200 break-words" x-html="formatMessage(log.message)"></div>
